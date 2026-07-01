@@ -1,4 +1,4 @@
-import { Daytona, type Sandbox } from "@daytonaio/sdk";
+import { Daytona, type Sandbox } from "@daytona/sdk";
 
 /**
  * Daytona sandbox client
@@ -8,8 +8,6 @@ import { Daytona, type Sandbox } from "@daytonaio/sdk";
  *
  * Image: datellix-data-analysis built from daytona-image/Dockerfile
  * Pre-installed: duckdb / pandas / scikit-learn / matplotlib / plotly
- *
- * Docs: https://github.com/daytonaio/daytona
  */
 
 let daytonaClient: Daytona | null = null;
@@ -19,7 +17,10 @@ function getClient(): Daytona {
   if (daytonaClient) return daytonaClient;
   daytonaClient = new Daytona({
     apiKey: process.env.DAYTONA_API_KEY!,
-    serverUrl: process.env.DAYTONA_SERVER_URL,
+    // SDK 0.192+: use apiUrl (serverUrl is deprecated).
+    // Default is https://app.daytona.io/api — the /api suffix is required,
+    // hitting the bare domain returns CloudFront 403.
+    apiUrl: process.env.DAYTONA_API_URL,
   });
   return daytonaClient;
 }
@@ -29,7 +30,8 @@ const sandboxCache = new Map<string, Sandbox>();
 
 /**
  * Get or create session-level sandbox
- * Phase 0: only create and cache; Phase 2 onwards adds pause/resume logic
+ * Phase 1: used for file schema extraction and DuckDB queries
+ * Phase 2: adds pause/resume/timeout governance
  */
 export async function getOrCreateSandbox(sessionId: string): Promise<Sandbox> {
   const cached = sandboxCache.get(sessionId);
@@ -38,7 +40,6 @@ export async function getOrCreateSandbox(sessionId: string): Promise<Sandbox> {
   const client = getClient();
   const sandbox = await client.create({
     image: process.env.DAYTONA_IMAGE ?? "datellix-data-analysis",
-    // Language identifier: Daytona uses this to select the default execution environment
     language: "python",
   });
   sandboxCache.set(sessionId, sandbox);
@@ -58,7 +59,7 @@ export async function killSandbox(sessionId: string): Promise<void> {
 
 /**
  * Execute Python code in sandbox and return the result
- * Phase 0 placeholder implementation; Phase 2 invoked by LangGraph code node
+ * Returns stdout (result), stderr, and exit code
  */
 export async function runPython(
   sessionId: string,
@@ -71,8 +72,24 @@ export async function runPython(
   const sandbox = await getOrCreateSandbox(sessionId);
   const result = await sandbox.process.codeRun(code);
   return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
+    stdout: result.result ?? "",
+    stderr: result.exitCode !== 0 ? result.result ?? "" : "",
     exitCode: result.exitCode ?? 0,
   };
 }
+
+/**
+ * Upload a file to the session sandbox at a given remote path
+ * Used to stage data files for DuckDB queries
+ */
+export async function uploadFileToSandbox(
+  sessionId: string,
+  fileBuffer: Buffer,
+  remotePath: string,
+): Promise<void> {
+  const sandbox = await getOrCreateSandbox(sessionId);
+  await sandbox.fs.uploadFile(fileBuffer, remotePath);
+}
+
+/** Standard path for data files inside the sandbox */
+export const SANDBOX_DATA_DIR = "/tmp/data";

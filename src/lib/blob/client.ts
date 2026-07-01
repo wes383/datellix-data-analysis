@@ -8,14 +8,16 @@ import { put, del, list, head } from "@vercel/blob";
  * Queried directly with DuckDB inside Daytona sandbox on demand (fetched to temp disk first)
  */
 
-/** Upload file to Blob, returns accessible URL */
+/** Upload file to Blob, returns accessible URL.
+ *  Uses addRandomSuffix to avoid conflicts when the same filename is uploaded
+ *  multiple times (Vercel Blob rejects overwrites by default). */
 export async function uploadFile(
   path: string,
   file: Blob | File | ArrayBuffer,
 ): Promise<string> {
   const blob = await put(path, file, {
     access: "private",
-    addRandomSuffix: false,
+    addRandomSuffix: true,
     token: process.env.BLOB_READ_WRITE_TOKEN,
   });
   return blob.url;

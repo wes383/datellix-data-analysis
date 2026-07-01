@@ -10,8 +10,8 @@ export interface DataSource {
   user_id: string;
   type: DataSourceType;
   name: string;
-  /** Encrypted connection config (ciphertext, decrypted by business layer before use) */
-  config_encrypted: Record<string, unknown>;
+  /** Encrypted config ciphertext (pgcrypto output, TEXT). Decrypted server-side before use. */
+  config_encrypted: string;
   meta: Record<string, unknown>;
   created_at: string;
   updated_at: string;

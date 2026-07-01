@@ -1,0 +1,8 @@
+allowBuilds:
+  es5-ext: false
+  protobufjs: false
+  sharp: true
+  unrs-resolver: true
+minimumReleaseAgeExclude:
+  - lucide-react@1.22.0
+  - postcss@8.5.16

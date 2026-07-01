@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { uploadFile, blobPath } from "@/lib/blob/client";
+import { encryptConfig } from "@/lib/db/crypto";
+import { indexDataSourceSchema } from "@/lib/agent/schema";
+import type { FileConfig } from "@/lib/db/schema";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -11,10 +14,14 @@ export const maxDuration = 60;
  * Request: POST /api/upload
  * form-data: { sessionId: string, file: File }
  *
- * Response: { fileRef: string, filename: string, size: number }
+ * Response: { dataSourceId, fileRef, filename, size, format, indexed }
  *
- * Flow: browser → Server Action → Vercel Blob
- *      → later queried directly with DuckDB inside Daytona sandbox
+ * Flow:
+ *   1. Upload file to Vercel Blob
+ *   2. Create a `file` data_source with encrypted config (blobUrl, filename, format, size)
+ *   3. Bind data_source to the session
+ *   4. Index schema (extract columns → embed → store in pgvector)
+ *   5. Return data source info
  */
 export async function POST(req: NextRequest) {
   const supabase = await createClient();
@@ -42,15 +49,71 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Session not found or access denied" }, { status: 404 });
   }
 
-  // Upload to Blob
+  // 1. Upload to Blob
   const path = blobPath(user.id, sessionId, file.name);
-  const url = await uploadFile(path, file);
+  const blobUrl = await uploadFile(path, file);
+  const format = detectFormat(file.name);
+
+  // 2. Create data_source with encrypted config
+  const fileConfig: FileConfig = {
+    blobUrl,
+    filename: file.name,
+    format,
+    size: file.size,
+  };
+  const configEncrypted = await encryptConfig(fileConfig);
+
+  const { data: dataSource, error: dsError } = await supabase
+    .from("data_sources")
+    .insert({
+      user_id: user.id,
+      type: "file",
+      name: file.name,
+      config_encrypted: configEncrypted,
+      meta: { format, size: file.size, blobPath: path },
+    })
+    .select("id")
+    .single();
+
+  if (dsError || !dataSource) {
+    return NextResponse.json(
+      { error: `Failed to create data source: ${dsError?.message ?? "unknown"}` },
+      { status: 500 },
+    );
+  }
+
+  // 3. Bind data_source to session
+  await supabase
+    .from("sessions")
+    .update({ data_source_id: dataSource.id, title: file.name })
+    .eq("id", sessionId);
+
+  // 4. Index schema (best-effort: don't fail the upload if indexing fails)
+  let indexed = false;
+  let indexError: string | undefined;
+  try {
+    await indexDataSourceSchema({
+      dataSourceId: dataSource.id,
+      userId: user.id,
+      type: "file",
+      configEncrypted,
+      sessionId,
+      meta: { format, size: file.size },
+    });
+    indexed = true;
+  } catch (err) {
+    indexError = err instanceof Error ? err.message : "Schema indexing failed";
+    console.error("[upload] schema indexing failed:", indexError);
+  }
 
   return NextResponse.json({
-    fileRef: url,
+    dataSourceId: dataSource.id,
+    fileRef: blobUrl,
     filename: file.name,
     size: file.size,
-    format: detectFormat(file.name),
+    format,
+    indexed,
+    indexError,
   });
 }
 

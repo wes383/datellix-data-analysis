@@ -19,7 +19,8 @@ export async function middleware(req: NextRequest) {
         },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) => {
-            req.cookies.set(name, value, options);
+            // Request cookies only accept (key, value); options go on response cookies
+            req.cookies.set(name, value);
             res.cookies.set(name, value, options);
           });
         },
