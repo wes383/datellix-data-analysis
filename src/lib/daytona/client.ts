@@ -90,11 +90,10 @@ const sessionUsage = new Map<string, { totalSeconds: number; lastActivity: numbe
 const SANDBOX_MAX_SECONDS = Number(process.env.SANDBOX_MAX_SECONDS ?? 300);
 
 /**
- * Destroy a sandbox by its Daytona ID. Used by lazy cleanup of legacy
- * `sandbox_id` values left over from the old session-bound sandbox model
- * (or from a request-level sandbox whose `finally` didn't run because the
- * user closed the page mid-stream). Safe to call on already-deleted
- * sandboxes (404 is silently ignored).
+ * Destroy a sandbox by its Daytona ID. Safe to call on already-deleted
+ * sandboxes (404 is silently ignored). Kept for future use; the request-level
+ * sandbox model handles cleanup in the `/api/chat` finally block, so this
+ * is currently not called from any active code path.
  */
 export async function destroySandboxById(sandboxId: string): Promise<void> {
   const client = getClient();

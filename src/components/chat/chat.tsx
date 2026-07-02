@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { ArrowUp, ChevronRight, Database, Loader2, Upload, Wrench, X } from "lucide-react";
+import { ArrowUp, ChevronRight, Database, Loader2, Plus, Wrench, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { Message } from "@/lib/db/schema";
@@ -13,6 +12,16 @@ import {
   type ArtifactView,
 } from "@/components/chat/artifact-renderer";
 import { Markdown } from "@/components/chat/markdown";
+import { AddDataSourceDialog } from "@/components/chat/add-data-source-dialog";
+
+/** Existing DB data source shape passed from the server to the client.
+ *  Mirrors the `ExistingSource` type in add-data-source-dialog.tsx. */
+interface ExistingSource {
+  id: string;
+  type: string;
+  name: string;
+  meta: Record<string, unknown>;
+}
 
 /** Discriminated union for the data source bound to a session.
  *  - database mode: a single DB data source (pg/mysql/bigquery/duckdb/sqlite)
@@ -32,6 +41,7 @@ interface ChatProps {
   initialMessages: Message[];
   initialArtifacts?: Artifact[];
   dataSource?: DataSourceProp;
+  existingSources?: ExistingSource[];
 }
 
 /* DB Artifact shape (payload is Record<string, unknown>).
@@ -94,6 +104,7 @@ export function Chat({
   initialMessages,
   initialArtifacts = [],
   dataSource = null,
+  existingSources = [],
 }: ChatProps) {
   const router = useRouter();
   // `sessionId` prop is "new" for a pending session (no DB row yet). The
@@ -108,8 +119,6 @@ export function Chat({
   );
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [connectingDatabase, setConnectingDatabase] = useState(false);
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
   // Track which file data source is currently being removed (Task 19) so we
   // can disable its X button and show a spinner.
@@ -329,65 +338,6 @@ export function Chat({
     }
   }
 
-  async function handleFileUpload(file: File) {
-    if (uploading) return;
-
-    // For a pending session ("new"), create the real DB session first —
-    // upload needs a session_id to bind the data source.
-    let activeSessionId = resolvedSessionId;
-    let isNewSession = false;
-    if (!activeSessionId) {
-      try {
-        const session = await createSession();
-        activeSessionId = session.id;
-        setResolvedSessionId(session.id);
-        isNewSession = true;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Failed to create session";
-        toast.error(msg);
-        return;
-      }
-    }
-
-    setUploading(true);
-    const toastId = toast.loading(`Uploading ${file.name}…`);
-    const formData = new FormData();
-    formData.append("sessionId", activeSessionId);
-    formData.append("file", file);
-    try {
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      if (!res.ok) {
-        const errBody = await res.text();
-        throw new Error(errBody || `Upload failed: ${res.status}`);
-      }
-      const data = (await res.json()) as {
-        filename: string;
-        size: number;
-        format: string;
-        indexed: boolean;
-        indexError?: string;
-      };
-      toast.success(`Uploaded ${data.filename}`, {
-        id: toastId,
-        description: data.indexed
-          ? `${data.format} · ${formatBytes(data.size)} · schema indexed`
-          : `${data.format} · ${formatBytes(data.size)}${
-              data.indexError ? ` · index failed: ${data.indexError}` : ""
-            }`,
-      });
-      if (isNewSession) {
-        router.replace(`/chat/${activeSessionId}`);
-      }
-      // Refresh server component so the DataSourceBar updates
-      router.refresh();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Upload failed";
-      toast.error(msg, { id: toastId });
-    } finally {
-      setUploading(false);
-    }
-  }
-
   async function handleRemoveFile(fileId: string) {
     // Remove a file data source from the current session (multi-file mode).
     // Calls DELETE /api/sources/[id]?sessionId=... then refreshes the
@@ -406,7 +356,7 @@ export function Chat({
         const errBody = await res.text();
         throw new Error(errBody || `Remove failed: ${res.status}`);
       }
-      toast.success("File removed");
+      toast.success("Data source disconnected");
       router.refresh();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Remove failed";
@@ -414,26 +364,6 @@ export function Chat({
     } finally {
       setRemovingFileId(null);
     }
-  }
-
-  async function handleConnectDatabase() {
-    if (connectingDatabase) return;
-    let activeSessionId = resolvedSessionId;
-    if (!activeSessionId) {
-      setConnectingDatabase(true);
-      try {
-        const session = await createSession();
-        activeSessionId = session.id;
-        setResolvedSessionId(session.id);
-        router.replace(`/chat/${session.id}`);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Failed to create session";
-        toast.error(msg);
-        setConnectingDatabase(false);
-        return;
-      }
-    }
-    router.push(`/sources/new?sessionId=${activeSessionId}`);
   }
 
   return (
@@ -444,12 +374,9 @@ export function Chat({
       <DataSourceBar
         sessionId={resolvedSessionId || sessionId}
         dataSource={dataSource}
-        uploading={uploading}
-        onUpload={handleFileUpload}
         onRemoveFile={handleRemoveFile}
         removingFileId={removingFileId}
-        onConnectDatabase={handleConnectDatabase}
-        connectingDatabase={connectingDatabase}
+        existingSources={existingSources}
       />
 
       {/* ============================================================
@@ -457,17 +384,6 @@ export function Chat({
           ============================================================ */}
       <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-6 py-8">
-          {messages.length === 0 && !pendingAssistant && (
-            <WelcomeState
-              sessionId={resolvedSessionId || sessionId}
-              hasDataSource={!!dataSource}
-              uploading={uploading}
-              onUpload={handleFileUpload}
-              onConnectDatabase={handleConnectDatabase}
-              connectingDatabase={connectingDatabase}
-            />
-          )}
-
           <div className="space-y-8">
             {messages.map((m, idx) => (
               <MessageRow
@@ -698,25 +614,17 @@ function dbTypeLabel(type: string): string {
 function DataSourceBar({
   sessionId,
   dataSource,
-  uploading,
-  onUpload,
   onRemoveFile,
   removingFileId,
-  onConnectDatabase,
-  connectingDatabase,
+  existingSources,
 }: {
   sessionId: string;
   dataSource: DataSourceProp;
-  uploading: boolean;
-  onUpload: (file: File) => void;
   onRemoveFile: (fileId: string) => void;
   removingFileId: string | null;
-  onConnectDatabase: () => void;
-  connectingDatabase: boolean;
+  existingSources: ExistingSource[];
 }) {
   const hasDataSource = !!dataSource;
-  // In files mode, the "Connect Postgres" link is hidden (mutual exclusion).
-  const isFilesMode = dataSource?.mode === "files";
 
   return (
     <div
@@ -727,14 +635,29 @@ function DataSourceBar({
       <div className="flex min-w-0 items-center gap-2">
         <Database className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         {dataSource?.mode === "database" ? (
-          <>
+          <div className="flex items-center gap-2">
             <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
               {dbTypeLabel(dataSource.data.type)}
             </span>
-            <span className="truncate font-mono text-sm font-medium text-foreground">
-              {dataSource.data.name}
+            <span className="inline-flex items-center gap-1.5 rounded border border-border bg-background/60 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+              <span className="truncate max-w-[12rem]" title={dataSource.data.name}>
+                {dataSource.data.name}
+              </span>
+              <button
+                type="button"
+                onClick={() => onRemoveFile(dataSource.data.id)}
+                disabled={removingFileId === dataSource.data.id}
+                aria-label={`Disconnect ${dataSource.data.name}`}
+                className="ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+              >
+                {removingFileId === dataSource.data.id ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <X className="h-3 w-3" />
+                )}
+              </button>
             </span>
-          </>
+          </div>
         ) : dataSource?.mode === "files" ? (
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
             <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
@@ -777,183 +700,27 @@ function DataSourceBar({
         )}
       </div>
 
-      {/* Right side: upload link + connect/switch link */}
-      <div className="flex shrink-0 items-center gap-3">
-        {uploading ? (
-          <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            Uploading
-          </span>
-        ) : (
-          <label
-            className="cursor-pointer font-mono text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
-            title="Upload CSV / Excel / Parquet"
-          >
-            Upload file
-            <input
-              type="file"
-              className="hidden"
-              accept=".csv,.xlsx,.xls,.parquet"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) onUpload(file);
-                e.target.value = "";
-              }}
-            />
-          </label>
-        )}
-        {!isFilesMode && (
-          <button
-            type="button"
-            disabled={connectingDatabase}
-            onClick={onConnectDatabase}
-            className={`font-mono text-[10px] uppercase tracking-wider transition-colors disabled:opacity-50 ${
-              hasDataSource
-                ? "text-muted-foreground hover:text-foreground"
-                : "text-primary hover:text-primary/80"
-            }`}
-          >
-            {connectingDatabase ? "Connecting..." : "Connect database"}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================
-    Welcome state
-    ============================================================ */
-
-function WelcomeState({
-  sessionId,
-  hasDataSource,
-  uploading,
-  onUpload,
-  onConnectDatabase,
-  connectingDatabase,
-}: {
-  sessionId: string;
-  hasDataSource: boolean;
-  uploading: boolean;
-  onUpload: (file: File) => void;
-  onConnectDatabase: () => void;
-  connectingDatabase: boolean;
-}) {
-  const [isDragging, setIsDragging] = useState(false);
-
-  if (hasDataSource) return null;
-
-  // Accepted file extensions — must match the <input accept="..."> attribute.
-  const ACCEPTED_EXTENSIONS = [".csv", ".xlsx", ".xls", ".parquet"];
-
-  function isAcceptedFile(file: File): boolean {
-    const name = file.name.toLowerCase();
-    return ACCEPTED_EXTENSIONS.some((ext) => name.endsWith(ext));
-  }
-
-  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-    if (uploading) return;
-    const file = e.dataTransfer.files?.[0];
-    if (!file) return;
-    if (!isAcceptedFile(file)) {
-      toast.error(
-        `Unsupported file format. Accepted: ${ACCEPTED_EXTENSIONS.join(", ")}`,
-      );
-      return;
-    }
-    onUpload(file);
-  }
-
-  function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (uploading) return;
-    setIsDragging(true);
-  }
-
-  function handleDragLeave(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    // Only clear the drag state when leaving the container itself (not when
-    // moving between child elements). relatedTarget is the element entering;
-    // if it's still inside the container, don't clear.
-    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-      setIsDragging(false);
-    }
-  }
-
-  return (
-    <div
-      onDrop={handleDrop}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      className={`mb-12 flex flex-col items-center justify-center rounded-lg border border-dashed px-6 py-16 text-center transition-colors ${
-        isDragging
-          ? "border-primary bg-primary/5"
-          : "border-border"
-      }`}
-    >
-      {isDragging ? (
-        <div className="flex flex-col items-center gap-2 text-primary">
-          <Upload className="h-6 w-6" />
-          <p className="text-sm font-medium">
-            Drop your file to upload
-          </p>
-          <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            CSV · XLSX · XLS · Parquet
-          </p>
-        </div>
-      ) : (
-        <div className="flex items-center gap-3">
-          {!hasDataSource && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={connectingDatabase}
-              onClick={onConnectDatabase}
-            >
-              {connectingDatabase ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Database className="h-3.5 w-3.5" />
-              )}
-              {connectingDatabase ? "Connecting..." : "Connect a database"}
+      {/* Right side: single "Add data source" trigger */}
+      <div className="flex shrink-0 items-center">
+        <AddDataSourceDialog
+          sessionId={sessionId}
+          hasDataSource={hasDataSource}
+          dataSourceMode={
+            dataSource?.mode === "database"
+              ? "database"
+              : dataSource?.mode === "files"
+                ? "files"
+                : null
+          }
+          existingSources={existingSources}
+          trigger={
+            <Button variant="outline" size="sm">
+              <Plus className="h-3.5 w-3.5" />
+              Add data source
             </Button>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={uploading}
-            asChild
-          >
-            {uploading ? (
-              <span>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Uploading
-              </span>
-            ) : (
-              <label className="cursor-pointer">
-                <Upload className="h-3.5 w-3.5" />
-                Upload file
-                <input
-                  type="file"
-                  className="hidden"
-                  accept=".csv,.xlsx,.xls,.parquet"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) onUpload(file);
-                    e.target.value = "";
-                  }}
-                />
-              </label>
-            )}
-          </Button>
-        </div>
-      )}
+          }
+        />
+      </div>
     </div>
   );
 }

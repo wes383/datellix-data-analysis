@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { streamAgent } from "@/lib/agent/graph";
+import { logUsage } from "@/lib/usage";
 import {
   createSandbox,
   deleteSandbox,
@@ -259,6 +260,13 @@ export async function POST(req: NextRequest) {
       // fragments) carry an empty id and need to be attributed to this id.
       let currentToolCallId = "";
 
+      // Accumulate LLM token usage across all AIMessageChunks in this turn.
+      // LangChain streams usage_metadata on the final chunk of each LLM call
+      // (input_tokens, output_tokens, total_tokens). A ReAct turn may have
+      // multiple LLM calls (one per reasoning step), so we sum them all.
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
+
       const send = (data: unknown) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
       };
@@ -312,6 +320,18 @@ export async function POST(req: NextRequest) {
           // ----------------------------------------------------------
           if (msg instanceof AIMessageChunk || msg._getType?.() === "ai") {
             const aiChunk = msg as AIMessageChunk;
+
+            // 0. Token usage metadata — LangChain streams this on the final
+            //    chunk of each LLM call. Accumulate across all LLM calls in
+            //    this turn (a ReAct loop may issue multiple LLM calls).
+            //    usage_metadata shape: { input_tokens, output_tokens, total_tokens }
+            const usage = (aiChunk as { usage_metadata?: Record<string, unknown> }).usage_metadata;
+            if (usage) {
+              const inTok = Number(usage.input_tokens ?? 0);
+              const outTok = Number(usage.output_tokens ?? 0);
+              if (!Number.isNaN(inTok)) totalInputTokens += inTok;
+              if (!Number.isNaN(outTok)) totalOutputTokens += outTok;
+            }
 
             // 1. Visible text content (narration + final answer)
             const text = extractText(aiChunk.content);
@@ -550,6 +570,39 @@ export async function POST(req: NextRequest) {
             await deleteSandbox(sb);
           } catch (err) {
             console.error("[chat] failed to clean up request sandbox:", err);
+          }
+        }
+        // Trim old LangGraph checkpoints to prevent unbounded growth in
+        // long conversations. Keeps the most recent 50 checkpoints (enough
+        // for replay); older ones are deleted from checkpoints + checkpoint_writes.
+        // Then trim orphaned checkpoint_blobs — binary blobs whose parent
+        // checkpoints were just deleted. Best-effort: don't block response.
+        try {
+          const admin = createAdminClient();
+          await admin.rpc("trim_checkpoints", {
+            p_thread_id: sessionId,
+            p_keep: 50,
+          });
+          await admin.rpc("trim_checkpoint_blobs", {
+            p_thread_id: sessionId,
+          });
+        } catch (err) {
+          console.error("[chat] failed to trim old checkpoints:", err);
+        }
+        // Log LLM token usage for this turn. Accumulated from
+        // usage_metadata on AIMessageChunks across all LLM calls in the
+        // ReAct loop. Best-effort: don't block response on failure.
+        if (totalInputTokens > 0 || totalOutputTokens > 0) {
+          try {
+            await logUsage({
+              userId: user.id,
+              sessionId,
+              tokensIn: totalInputTokens,
+              tokensOut: totalOutputTokens,
+              source: "llm",
+            });
+          } catch (err) {
+            console.error("[chat] failed to log LLM usage:", err);
           }
         }
         controller.close();

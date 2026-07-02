@@ -1,6 +1,8 @@
 "use client";
 
-import { BarChart3, Code2, FileText, LineChart, Table2 } from "lucide-react";
+import { forwardRef, useRef, useState } from "react";
+import { toPng } from "html-to-image";
+import { BarChart3, Code2, Download, FileText, LineChart, Loader2, Table2 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -61,10 +63,55 @@ const ARTIFACT_META: Record<
 /**
  * Renders an artifact (chart / table / code / summary) inside a bordered card.
  * Used by the Chat component when streaming artifacts arrive from /api/chat.
+ *
+ * Exportable artifacts show a Download button in the header:
+ *   - chart (recharts) / forecast → PNG via html-to-image
+ *   - chart (plotly)              → PNG handled inside PlotlyRenderer
+ *   - table                       → CSV download
  */
 export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
   const meta = ARTIFACT_META[artifact.type];
   const Icon = meta.icon;
+
+  // Ref to the Recharts container DOM node, used for PNG export.
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const [exporting, setExporting] = useState(false);
+
+  /** Whether this artifact shows a header-level download button. */
+  const canExport =
+    artifact.type === "table" ||
+    (artifact.type === "chart" &&
+      (artifact.payload as ChartPayload).renderer !== "plotly") ||
+    artifact.type === "forecast";
+
+  async function handleExport() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      if (artifact.type === "table") {
+        const payload = artifact.payload as TablePayload;
+        const filename = sanitizeFilename(payload.title ?? "table") + ".csv";
+        downloadCsv(payload.columns, payload.rows, filename);
+      } else if (chartContainerRef.current) {
+        // chart (recharts) + forecast both render via RechartsRenderer
+        const payload = artifact.payload as ChartPayload | ForecastPayload;
+        const title =
+          (payload as ChartPayload).title ??
+          (artifact.type === "forecast" ? "forecast" : "chart");
+        const filename = sanitizeFilename(title) + ".png";
+        const dataUrl = await toPng(chartContainerRef.current, {
+          backgroundColor: "#ffffff",
+          pixelRatio: 2,
+          cacheBust: true,
+        });
+        triggerDownload(dataUrl, filename);
+      }
+    } catch (err) {
+      console.error("[artifact] export failed:", err);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return (
     <div className="animate-fade-up rounded-lg border border-border bg-card p-4 shadow-sm">
@@ -75,17 +122,40 @@ export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
           {meta.label}
           {artifact.node ? ` · ${artifact.node}` : ""}
         </span>
+        {canExport && (
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting}
+            className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+            aria-label={
+              artifact.type === "table" ? "Download CSV" : "Download PNG"
+            }
+            title={
+              artifact.type === "table" ? "Download CSV" : "Download PNG"
+            }
+          >
+            {exporting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5" />
+            )}
+          </button>
+        )}
       </div>
 
       {/* Body */}
       <div className="artifact-body">
-        {renderBody(artifact)}
+        {renderBody(artifact, chartContainerRef)}
       </div>
     </div>
   );
 }
 
-function renderBody(artifact: ArtifactView): React.ReactNode {
+function renderBody(
+  artifact: ArtifactView,
+  chartContainerRef: React.Ref<HTMLDivElement>,
+): React.ReactNode {
   switch (artifact.type) {
     case "chart": {
       const payload = artifact.payload as ChartPayload;
@@ -99,7 +169,7 @@ function renderBody(artifact: ArtifactView): React.ReactNode {
           />
         );
       }
-      return <RechartsRenderer spec={payload} />;
+      return <RechartsRenderer ref={chartContainerRef} spec={payload} />;
     }
 
     case "table":
@@ -109,7 +179,12 @@ function renderBody(artifact: ArtifactView): React.ReactNode {
       return <CodeArtifactView payload={artifact.payload as CodePayload} />;
 
     case "forecast":
-      return <ForecastArtifactView payload={artifact.payload as ForecastPayload} />;
+      return (
+        <ForecastArtifactView
+          ref={chartContainerRef}
+          payload={artifact.payload as ForecastPayload}
+        />
+      );
 
     case "summary":
       return <SummaryArtifactView payload={artifact.payload as SummaryPayload} />;
@@ -244,9 +319,13 @@ function SummaryArtifactView({ payload }: { payload: SummaryPayload }) {
     Forecast artifact (Phase 2 §2.2)
     Renders a forecast result: a line chart with historical actuals +
     future forecast values, plus MAE/RMSE/MAPE metrics below.
+    Forwards a ref to the inner RechartsRenderer for PNG export.
     ============================================================ */
 
-function ForecastArtifactView({ payload }: { payload: ForecastPayload }) {
+const ForecastArtifactView = forwardRef<
+  HTMLDivElement,
+  { payload: ForecastPayload }
+>(function ForecastArtifactView({ payload }, ref) {
   const { method, horizon, metrics, predictions, summary } = payload;
 
   // Build chart data: one row per prediction entry. `actual` and `forecast`
@@ -265,6 +344,7 @@ function ForecastArtifactView({ payload }: { payload: ForecastPayload }) {
         {summary}
       </p>
       <RechartsRenderer
+        ref={ref}
         spec={{
           chartType: "line",
           data: chartData,
@@ -301,7 +381,7 @@ function ForecastArtifactView({ payload }: { payload: ForecastPayload }) {
       </dl>
     </div>
   );
-}
+});
 
 /* ============================================================
     Utilities
@@ -333,4 +413,57 @@ function formatStat(value: number): string {
     return value.toExponential(2);
   }
   return value.toFixed(4);
+}
+
+/* ============================================================
+    Export helpers (Phase 3 §3.1)
+    ============================================================ */
+
+/** Replace characters that are unsafe in filenames with underscores. */
+function sanitizeFilename(name: string): string {
+  const cleaned = name.trim().replace(/[^\w\-.]+/g, "_");
+  return cleaned || "export";
+}
+
+/** Trigger a browser download from a data URL or object URL. */
+function triggerDownload(url: string, filename: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+/** CSV-escape a single cell value per RFC 4180. */
+function csvEscape(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  const str =
+    typeof value === "object"
+      ? JSON.stringify(value)
+      : String(value);
+  // Quote if the value contains a comma, quote, newline, or carriage return.
+  if (/[",\r\n]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+/** Build a CSV string from columns + rows. */
+function toCsvString(columns: string[], rows: unknown[][]): string {
+  const header = columns.map(csvEscape).join(",");
+  const body = rows
+    .map((row) => columns.map((_, i) => csvEscape(row[i])).join(","))
+    .join("\n");
+  return header + "\n" + body;
+}
+
+/** Build a CSV string from table data and trigger a browser download. */
+function downloadCsv(columns: string[], rows: unknown[][], filename: string) {
+  const csv = toCsvString(columns, rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  triggerDownload(url, filename);
+  // Release the object URL after the download is dispatched.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

@@ -4,8 +4,6 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { deleteFile } from "@/lib/blob/client";
-import { decryptConfig } from "@/lib/db/crypto";
-import type { FileConfig } from "@/lib/db/schema";
 
 /** Create a new analysis session */
 export async function createSession(dataSourceId?: string) {
@@ -35,16 +33,21 @@ export async function createSession(dataSourceId?: string) {
  *
  * Cleanup order:
  * 1. If the session is in single-DB mode (sessions.data_source_id set) and
- *    the data source is not referenced by any other session, delete the
- *    Blob file (file-type sources) and the data_sources row
- *    (schema_embeddings cascade-deletes via FK).
+ *    the data source is not referenced by any other session: file-type
+ *    sources (file/duckdb/sqlite) have their Blob file and data_sources
+ *    row deleted (schema_embeddings cascade-deletes via FK); DB-type
+ *    sources (pg/mysql/bigquery) are kept so the user can re-bind them
+ *    from /sources.
  * 1b. If the session is in multi-file mode (rows in session_data_sources),
  *    for each file data source: if no other session references it, delete
- *    the Blob file (via meta.blobPath) and the data_sources row. The
+ *    the Blob file (via meta.blobUrl) and the data_sources row. The
  *    session_data_sources join rows themselves cascade-delete with the
  *    session (FK on delete cascade).
- * 2. Delete the session row — messages, artifacts, and
- *    session_history_embeddings cascade-delete via FK.
+ * 2. Delete LangGraph checkpoint rows for this thread (sessionId =
+ *    thread_id). These tables have no FK to sessions, so they don't
+ *    cascade-delete — must be cleaned up explicitly.
+ * 3. Delete the session row — messages, artifacts cascade-delete via FK.
+ *    session_data_sources rows also cascade-delete.
  *
  * Blob deletion failures are logged but do not abort the session deletion,
  * since orphaned Blob files are reclaimable via Vercel's lifecycle rules
@@ -70,31 +73,44 @@ export async function deleteSession(sessionId: string) {
       .neq("id", sessionId);
 
     if (count === 0) {
-      // No other session uses this data source — delete the Blob file and
-      // the data_sources row. schema_embeddings cascade-deletes.
+      // No other session references this data source.
+      //
+      // File-type sources (file/duckdb/sqlite) are session-scoped: clean
+      // up their Blob file and data_sources row here. DB-type sources
+      // (pg/mysql/bigquery) are long-lived and reusable — keep the
+      // data_sources row so the user can re-bind it from /sources. The
+      // sessions.data_source_id reference clears automatically when the
+      // session row is deleted below.
       const { data: ds } = await admin
         .from("data_sources")
-        .select("type, config_encrypted")
+        .select("type, meta")
         .eq("id", session.data_source_id)
         .single();
 
-      if (ds?.type === "file" && ds.config_encrypted) {
-        try {
-          const config = await decryptConfig<FileConfig>(ds.config_encrypted);
-          if (config.blobUrl) {
-            await deleteFile(config.blobUrl);
-          }
-        } catch (err) {
-          // Log but don't fail the session deletion — orphaned Blob files
-          // can be reclaimed via Vercel lifecycle rules.
-          console.error(
-            `[deleteSession] failed to delete Blob file for data source ${session.data_source_id}:`,
-            err,
-          );
-        }
-      }
+      const isFileType =
+        ds?.type === "file" ||
+        ds?.type === "duckdb" ||
+        ds?.type === "sqlite";
 
-      await admin.from("data_sources").delete().eq("id", session.data_source_id);
+      if (isFileType && ds) {
+        const meta = (ds.meta ?? {}) as Record<string, unknown>;
+        const blobUrl =
+          typeof meta.blobUrl === "string" ? meta.blobUrl : null;
+        if (blobUrl) {
+          try {
+            await deleteFile(blobUrl);
+          } catch (err) {
+            // Log but don't fail the session deletion — orphaned Blob files
+            // can be reclaimed via Vercel lifecycle rules.
+            console.error(
+              `[deleteSession] failed to delete Blob file for data source ${session.data_source_id}:`,
+              err,
+            );
+          }
+        }
+        await admin.from("data_sources").delete().eq("id", session.data_source_id);
+      }
+      // DB types (pg/mysql/bigquery): keep the data_sources row.
     }
   }
 
@@ -130,11 +146,11 @@ export async function deleteSession(sessionId: string) {
 
         if (ds) {
           const meta = (ds.meta ?? {}) as Record<string, unknown>;
-          const blobPath =
-            typeof meta.blobPath === "string" ? meta.blobPath : null;
-          if (blobPath) {
+          const blobUrl =
+            typeof meta.blobUrl === "string" ? meta.blobUrl : null;
+          if (blobUrl) {
             try {
-              await deleteFile(blobPath);
+              await deleteFile(blobUrl);
             } catch (err) {
               console.error(
                 `[deleteSession] failed to delete Blob file for data source ${fileDsId}:`,
@@ -148,14 +164,25 @@ export async function deleteSession(sessionId: string) {
     }
   }
 
-  // 2. Delete the session — messages, artifacts, session_history_embeddings
-  //    cascade-delete via their FK on delete cascade. session_data_sources
-  //    rows also cascade-delete via their FK on delete cascade.
-  //
-  //    Note: under the ephemeral sandbox model, runPython creates+deletes
-  //    the sandbox per call, so there is no persistent sandbox to clean up
-  //    here. The sandbox_id column (legacy from the old session-bound
-  //    model) is cleared lazily on next session page load.
+  // 2. Delete LangGraph checkpoint rows for this thread. The checkpoint
+  //    tables (checkpoints, checkpoint_blobs, checkpoint_writes) have no
+  //    FK to sessions, so they don't cascade-delete. If left behind, they
+  //    accumulate indefinitely (each agent turn produces 1-3 checkpoints
+  //    with serialized state + binary blobs). Best-effort: log on failure
+  //    but don't block session deletion.
+  try {
+    await admin.from("checkpoints").delete().eq("thread_id", sessionId);
+    await admin.from("checkpoint_blobs").delete().eq("thread_id", sessionId);
+    await admin.from("checkpoint_writes").delete().eq("thread_id", sessionId);
+  } catch (err) {
+    console.error(
+      `[deleteSession] failed to clean up LangGraph checkpoints for ${sessionId}:`,
+      err,
+    );
+  }
+
+  // 3. Delete the session — messages, artifacts cascade-delete via their
+  //    FK on delete cascade. session_data_sources rows also cascade-delete.
   const { error } = await supabase
     .from("sessions")
     .delete()

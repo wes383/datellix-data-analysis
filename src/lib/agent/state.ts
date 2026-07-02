@@ -44,6 +44,18 @@ export interface ChartPayload {
   renderer?: "recharts" | "plotly";
   /** Plotly figure JSON (data + layout). Present only when renderer === "plotly". */
   plotlyFigure?: Record<string, unknown>;
+  /** Optional Recharts UI configuration overrides */
+  uiConfig?: {
+    colors?: string[];
+    stacked?: boolean;
+    showGrid?: boolean;
+    showLegend?: boolean;
+    showDot?: boolean;
+    yAxisLabel?: string;
+    xAxisLabel?: string;
+    lineType?: "basis" | "linear" | "monotone" | "step";
+    barSize?: number;
+  };
 }
 
 export interface TablePayload {

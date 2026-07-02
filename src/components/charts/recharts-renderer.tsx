@@ -1,5 +1,6 @@
 "use client";
 
+import { forwardRef } from "react";
 import {
   Bar,
   BarChart,
@@ -18,6 +19,7 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
+  Label,
 } from "recharts";
 
 import type { ChartPayload } from "@/lib/agent/state";
@@ -95,35 +97,40 @@ const TOOLTIP_STYLE = {
  *
  * Supports bar, line, area, pie, and scatter chart types.
  * The chart is responsive and fills its container width.
+ *
+ * The component forwards a ref to the outer container div so the parent
+ * (e.g. ArtifactRenderer) can capture a PNG via `html-to-image`'s `toPng`.
  */
-export function RechartsRenderer({ spec }: RechartsRendererProps) {
-  const { chartType, data, xKey, yKeys, title, groupKey } = spec;
+export const RechartsRenderer = forwardRef<HTMLDivElement, RechartsRendererProps>(
+  function RechartsRenderer({ spec }, ref) {
+    const { chartType, data, xKey, yKeys, title, groupKey, uiConfig } = spec;
 
-  if (!data || data.length === 0 || !xKey || yKeys.length === 0) {
+    if (!data || data.length === 0 || !xKey || yKeys.length === 0) {
+      return (
+        <div className="flex h-48 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
+          No data to visualize
+        </div>
+      );
+    }
+
+    const containerHeight = chartType === "pie" ? 320 : 300;
+
     return (
-      <div className="flex h-48 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-        No data to visualize
+      <div className="w-full" ref={ref}>
+        {title && (
+          <p className="mb-3 font-display text-sm font-medium tracking-tight text-foreground">
+            {title}
+          </p>
+        )}
+        <div style={{ width: "100%", height: containerHeight }}>
+          <ResponsiveContainer width="100%" height="100%">
+            {renderChart(chartType, data, xKey, yKeys, groupKey, uiConfig)}
+          </ResponsiveContainer>
+        </div>
       </div>
     );
-  }
-
-  const containerHeight = chartType === "pie" ? 320 : 300;
-
-  return (
-    <div className="w-full">
-      {title && (
-        <p className="mb-3 font-display text-sm font-medium tracking-tight text-foreground">
-          {title}
-        </p>
-      )}
-      <div style={{ width: "100%", height: containerHeight }}>
-        <ResponsiveContainer width="100%" height="100%">
-          {renderChart(chartType, data, xKey, yKeys, groupKey)}
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-}
+  },
+);
 
 function renderChart(
   chartType: ChartPayload["chartType"],
@@ -131,68 +138,116 @@ function renderChart(
   xKey: string,
   yKeys: string[],
   groupKey?: string,
+  uiConfig?: ChartPayload["uiConfig"],
 ): React.ReactElement {
+  const activeColors = uiConfig?.colors && uiConfig.colors.length > 0 ? uiConfig.colors : COLORS;
+  const showGrid = uiConfig?.showGrid !== false;
+
   switch (chartType) {
-    case "bar":
+    case "bar": {
+      const displayLegend = uiConfig?.showLegend !== undefined ? uiConfig.showLegend : (yKeys.length > 1);
+      const chartMargin = {
+        top: 8,
+        right: 16,
+        left: uiConfig?.yAxisLabel ? 20 : 8,
+        bottom: uiConfig?.xAxisLabel ? 20 : 8,
+      };
+      const yAxisProps = { ...YAXIS_PROPS, width: uiConfig?.yAxisLabel ? 72 : 56 };
       return (
-        <BarChart data={data} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />
+        <BarChart data={data} margin={chartMargin}>
+          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />}
           <XAxis
             dataKey={xKey}
             tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }}
             tickLine={false}
             axisLine={{ stroke: "hsl(0 0% 89.8%)" }}
-          />
-          <YAxis {...YAXIS_PROPS} />
+          >
+            {uiConfig?.xAxisLabel && (
+              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+            )}
+          </XAxis>
+          <YAxis {...yAxisProps}>
+            {uiConfig?.yAxisLabel && (
+              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+            )}
+          </YAxis>
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
             formatter={TOOLTIP_FORMATTER}
           />
-          {yKeys.length > 1 && <Legend wrapperStyle={{ fontSize: "12px" }} />}
+          {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
           {yKeys.map((key, idx) => (
             <Bar
               key={key}
               dataKey={key}
-              fill={COLORS[idx % COLORS.length]}
+              fill={activeColors[idx % activeColors.length]}
               radius={[4, 4, 0, 0]}
+              stackId={uiConfig?.stacked ? "stack" : undefined}
+              barSize={uiConfig?.barSize}
             />
           ))}
         </BarChart>
       );
+    }
 
-    case "line":
+    case "line": {
+      const displayLegend = uiConfig?.showLegend !== undefined ? uiConfig.showLegend : (yKeys.length > 1);
+      const chartMargin = {
+        top: 8,
+        right: 16,
+        left: uiConfig?.yAxisLabel ? 20 : 8,
+        bottom: uiConfig?.xAxisLabel ? 20 : 8,
+      };
+      const yAxisProps = { ...YAXIS_PROPS, width: uiConfig?.yAxisLabel ? 72 : 56 };
       return (
-        <LineChart data={data} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />
+        <LineChart data={data} margin={chartMargin}>
+          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />}
           <XAxis
             dataKey={xKey}
             tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }}
             tickLine={false}
             axisLine={{ stroke: "hsl(0 0% 89.8%)" }}
-          />
-          <YAxis {...YAXIS_PROPS} />
+          >
+            {uiConfig?.xAxisLabel && (
+              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+            )}
+          </XAxis>
+          <YAxis {...yAxisProps}>
+            {uiConfig?.yAxisLabel && (
+              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+            )}
+          </YAxis>
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
             formatter={TOOLTIP_FORMATTER}
           />
-          {yKeys.length > 1 && <Legend wrapperStyle={{ fontSize: "12px" }} />}
+          {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
           {yKeys.map((key, idx) => (
             <Line
               key={key}
-              type="monotone"
+              type={uiConfig?.lineType || "monotone"}
               dataKey={key}
-              stroke={COLORS[idx % COLORS.length]}
+              stroke={activeColors[idx % activeColors.length]}
               strokeWidth={2}
-              dot={{ r: 3, fill: COLORS[idx % COLORS.length] }}
-              activeDot={{ r: 5 }}
+              dot={uiConfig?.showDot !== false ? { r: 3, fill: activeColors[idx % activeColors.length] } : false}
+              activeDot={uiConfig?.showDot !== false ? { r: 5 } : true}
             />
           ))}
         </LineChart>
       );
+    }
 
-    case "area":
+    case "area": {
+      const displayLegend = uiConfig?.showLegend !== undefined ? uiConfig.showLegend : (yKeys.length > 1);
+      const chartMargin = {
+        top: 8,
+        right: 16,
+        left: uiConfig?.yAxisLabel ? 20 : 8,
+        bottom: uiConfig?.xAxisLabel ? 20 : 8,
+      };
+      const yAxisProps = { ...YAXIS_PROPS, width: uiConfig?.yAxisLabel ? 72 : 56 };
       return (
-        <AreaChart data={data} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+        <AreaChart data={data} margin={chartMargin}>
           <defs>
             {yKeys.map((key, idx) => (
               <linearGradient
@@ -205,45 +260,58 @@ function renderChart(
               >
                 <stop
                   offset="5%"
-                  stopColor={COLORS[idx % COLORS.length]}
+                  stopColor={activeColors[idx % activeColors.length]}
                   stopOpacity={0.3}
                 />
                 <stop
                   offset="95%"
-                  stopColor={COLORS[idx % COLORS.length]}
+                  stopColor={activeColors[idx % activeColors.length]}
                   stopOpacity={0.05}
                 />
               </linearGradient>
             ))}
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />
+          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />}
           <XAxis
             dataKey={xKey}
             tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }}
             tickLine={false}
             axisLine={{ stroke: "hsl(0 0% 89.8%)" }}
-          />
-          <YAxis {...YAXIS_PROPS} />
+          >
+            {uiConfig?.xAxisLabel && (
+              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+            )}
+          </XAxis>
+          <YAxis {...yAxisProps}>
+            {uiConfig?.yAxisLabel && (
+              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+            )}
+          </YAxis>
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
             formatter={TOOLTIP_FORMATTER}
           />
-          {yKeys.length > 1 && <Legend wrapperStyle={{ fontSize: "12px" }} />}
+          {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
           {yKeys.map((key, idx) => (
             <Area
               key={key}
-              type="monotone"
+              type={uiConfig?.lineType || "monotone"}
               dataKey={key}
-              stroke={COLORS[idx % COLORS.length]}
+              stroke={activeColors[idx % activeColors.length]}
               strokeWidth={2}
               fill={`url(#gradient-${key})`}
+              stackId={uiConfig?.stacked ? "stack" : undefined}
+              dot={uiConfig?.showDot === true ? { r: 3, fill: activeColors[idx % activeColors.length] } : false}
+              activeDot={uiConfig?.showDot === true ? { r: 5 } : true}
             />
           ))}
         </AreaChart>
       );
+    }
 
     case "pie": {
       const yKey = yKeys[0];
+      const displayLegend = uiConfig?.showLegend !== undefined ? uiConfig.showLegend : true;
       return (
         <PieChart>
           <Tooltip
@@ -253,7 +321,7 @@ function renderChart(
               fontSize: "12px",
             }}
           />
-          <Legend wrapperStyle={{ fontSize: "12px" }} />
+          {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
           <Pie
             data={data}
             dataKey={yKey}
@@ -267,7 +335,7 @@ function renderChart(
             {data.map((_, idx) => (
               <Cell
                 key={idx}
-                fill={COLORS[idx % COLORS.length]}
+                fill={activeColors[idx % activeColors.length]}
                 stroke="hsl(0 0% 100%)"
                 strokeWidth={2}
               />
@@ -279,6 +347,14 @@ function renderChart(
 
     case "scatter": {
       const yKey = yKeys[0];
+      const chartMargin = {
+        top: 8,
+        right: 16,
+        left: uiConfig?.yAxisLabel ? 20 : 8,
+        bottom: uiConfig?.xAxisLabel ? 20 : 8,
+      };
+      const yAxisProps = { ...YAXIS_PROPS, width: uiConfig?.yAxisLabel ? 72 : 56 };
+
       // When a groupKey is present, split the data into one Scatter series
       // per distinct group value so each cluster gets its own color and
       // legend entry. Order groups by first appearance to keep cluster ids
@@ -301,9 +377,10 @@ function renderChart(
           const g = String(row[groupKey] ?? "Unknown");
           seriesMap.get(g)?.push(row);
         }
+        const displayLegend = uiConfig?.showLegend !== undefined ? uiConfig.showLegend : true;
         return (
-          <ScatterChart margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />
+          <ScatterChart margin={chartMargin}>
+            {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />}
             <XAxis
               dataKey={xKey}
               type="number"
@@ -311,20 +388,28 @@ function renderChart(
               tickLine={false}
               axisLine={{ stroke: "hsl(0 0% 89.8%)" }}
               tickFormatter={(v: number) => formatCompact(v)}
-            />
+            >
+              {uiConfig?.xAxisLabel && (
+                <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+              )}
+            </XAxis>
             <YAxis
               dataKey={yKey}
               type="number"
-              {...YAXIS_PROPS}
-            />
+              {...yAxisProps}
+            >
+              {uiConfig?.yAxisLabel && (
+                <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+              )}
+            </YAxis>
             <Tooltip
               contentStyle={TOOLTIP_STYLE}
               formatter={TOOLTIP_FORMATTER}
             />
-            <Legend wrapperStyle={{ fontSize: "12px" }} />
+            {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
             {groups.map((g, idx) => {
               // Noise points get a muted gray; clusters use the palette.
-              const color = g === "Noise" ? "#9ca3af" : COLORS[idx % COLORS.length];
+              const color = g === "Noise" ? "#9ca3af" : activeColors[idx % activeColors.length];
               return (
                 <Scatter
                   key={g}
@@ -339,9 +424,10 @@ function renderChart(
         );
       }
       // No grouping — single series, single color (original behavior).
+      const displayLegend = uiConfig?.showLegend !== undefined ? uiConfig.showLegend : false;
       return (
-        <ScatterChart margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />
+        <ScatterChart margin={chartMargin}>
+          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />}
           <XAxis
             dataKey={xKey}
             type="number"
@@ -349,19 +435,28 @@ function renderChart(
             tickLine={false}
             axisLine={{ stroke: "hsl(0 0% 89.8%)" }}
             tickFormatter={(v: number) => formatCompact(v)}
-          />
+          >
+            {uiConfig?.xAxisLabel && (
+              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+            )}
+          </XAxis>
           <YAxis
             dataKey={yKey}
             type="number"
-            {...YAXIS_PROPS}
-          />
+            {...yAxisProps}
+          >
+            {uiConfig?.yAxisLabel && (
+              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+            )}
+          </YAxis>
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
             formatter={TOOLTIP_FORMATTER}
           />
+          {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
           <Scatter
             data={data}
-            fill={COLORS[0]}
+            fill={activeColors[0]}
             fillOpacity={0.6}
           />
         </ScatterChart>
@@ -371,7 +466,7 @@ function renderChart(
     default:
       return (
         <BarChart data={data}>
-          <Bar dataKey={yKeys[0]} fill={COLORS[0]} />
+          <Bar dataKey={yKeys[0]} fill={activeColors[0]} />
         </BarChart>
       );
   }

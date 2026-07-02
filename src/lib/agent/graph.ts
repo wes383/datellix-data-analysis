@@ -66,6 +66,8 @@ async function getCheckpointer(): Promise<PostgresSaver> {
   return checkpointer;
 }
 
+
+
 // ============================================================
 // System prompt builder
 // ============================================================
@@ -98,7 +100,7 @@ You have access to tools. Use them autonomously and as many times as needed to f
 1. If a data source is connected, you already have a slice of relevant schema below. If it's not enough, call \`list_tables\` to see all tables or \`retrieve_schema\` with a topic to fetch more columns.
 2. Write a read-only SELECT query in ${dialectLabel} dialect and call \`execute_sql\` to run it. Inspect the returned rows.
 3. If the query fails, read the error, fix the SQL (table/column names, dialect syntax), and retry. You may call \`retrieve_schema\` or \`list_tables\` again to confirm names.
-4. When the user asks for a visualization, call \`build_chart\` with an appropriate chartType and valid xKey/yKeys from the result columns.
+4. When the user asks for a visualization, call \`build_chart\` with an appropriate chartType and valid xKey/yKeys from the result columns. You can optionally customize the chart layout and styling using \`uiConfig\` (e.g. custom colors, stacking, line interpolation types, legends, grids, dots, and axis labels) to match the user's specific formatting request.
 5. When the user asks about distributions, trends, or statistics, call \`summarize_data\` on the relevant query.
 6. For time series forecasting, call \`run_forecast\` with the SQL, date column, value column, horizon, and method (arima/ets/linear).
 7. For clustering, call \`run_cluster\` with the SQL, feature columns, method (kmeans/dbscan), and optional cluster count.

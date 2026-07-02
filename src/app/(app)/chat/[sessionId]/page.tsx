@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { destroySandboxById } from "@/lib/daytona/client";
 import { Chat } from "@/components/chat/chat";
 import type { Message, Artifact } from "@/lib/db/schema";
 
@@ -14,35 +13,12 @@ export default async function ChatPage({ params }: PageProps) {
   const supabase = await createClient();
 
   // Load session (RLS ensures only the owner can read)
-  // Include sandbox_id so we can clean up legacy sandboxes left over from
-  // the old session-bound sandbox model (or from a runPython call that was
-  // interrupted by the user closing the page before finally could run).
   const { data: session } = await supabase
     .from("sessions")
-    .select("id, user_id, title, status, data_source_id, sandbox_id, created_at, updated_at")
+    .select("id, user_id, title, status, data_source_id, created_at, updated_at")
     .eq("id", sessionId)
     .single();
   if (!session) notFound();
-
-  // Lazy cleanup of legacy sandbox_id: if the session still has a sandbox_id
-  // from the old persistent-sandbox model (or from an interrupted runPython),
-  // try to destroy it on Daytona and clear the column. This is best-effort —
-  // failures are swallowed so they never block page load. Runs after the
-  // session existence check but doesn't block the rest of the page logic.
-  const sandboxId = (session as { sandbox_id?: string | null }).sandbox_id;
-  if (sandboxId) {
-    // Fire-and-forget: don't await, so page load isn't delayed by Daytona API.
-    destroySandboxById(sandboxId)
-      .then(() =>
-        supabase
-          .from("sessions")
-          .update({ sandbox_id: null })
-          .eq("id", sessionId),
-      )
-      .catch((err) =>
-        console.error(`[chat page] failed to clean up legacy sandbox ${sandboxId}:`, err),
-      );
-  }
 
   // Load messages
   const { data: messages } = await supabase
@@ -119,12 +95,23 @@ export default async function ChatPage({ params }: PageProps) {
     .eq("session_id", sessionId)
     .order("created_at", { ascending: true });
 
+  // Pre-fetch the user's existing data sources for the
+  // "Add data source" dialog's "Use existing" tab. Both DB types
+  // and file types can be bound.
+  const { data: userSources } = await supabase
+    .from("data_sources")
+    .select("id, type, name, meta")
+    .eq("user_id", session.user_id)
+    .in("type", ["pg", "mysql", "bigquery", "file"])
+    .order("updated_at", { ascending: false });
+
   return (
     <Chat
       sessionId={sessionId}
       initialMessages={(messages ?? []) as unknown as Message[]}
       initialArtifacts={(artifacts ?? []) as unknown as Artifact[]}
       dataSource={dataSource}
+      existingSources={(userSources ?? []) as unknown as { id: string; type: string; name: string; meta: Record<string, unknown> }[]}
       key={sessionId}
     />
   );

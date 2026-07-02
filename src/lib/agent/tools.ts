@@ -674,6 +674,7 @@ export function buildChartPayload(
     xKey: string;
     yKeys: string[];
     title?: string;
+    uiConfig?: ChartPayload["uiConfig"];
   },
   sqlResults: SqlResults,
 ): ChartPayload | null {
@@ -709,6 +710,7 @@ export function buildChartPayload(
     yKeys: chartSpec.yKeys,
     title: chartSpec.title,
     data: chartData,
+    uiConfig: chartSpec.uiConfig,
   };
 }
 
@@ -1068,7 +1070,7 @@ export async function createAgentTools(
   // Tool 5: build_chart (returns a chart artifact)
   // ----------------------------------------------------------
   const buildChartTool = tool(
-    async ({ sql, chartType, xKey, yKeys, title }) => {
+    async ({ sql, chartType, xKey, yKeys, title, uiConfig }) => {
       const validation = validateSelectSql(sql);
       if (!validation.ok) {
         return [
@@ -1079,7 +1081,7 @@ export async function createAgentTools(
       try {
         const results = await runSql(sql);
         const chartPayload = buildChartPayload(
-          { chartType, xKey, yKeys, title },
+          { chartType, xKey, yKeys, title, uiConfig },
           results,
         );
         if (!chartPayload) {
@@ -1119,6 +1121,47 @@ export async function createAgentTools(
           .min(1)
           .describe("Column name(s) for the y-axis (numeric measures)."),
         title: z.string().optional().describe("Optional chart title."),
+        uiConfig: z
+          .object({
+            colors: z
+              .array(z.string())
+              .optional()
+              .describe("Custom hex/HSL colors for each series/line/bar."),
+            stacked: z
+              .boolean()
+              .optional()
+              .describe("Whether to stack series in bar/area charts."),
+            showGrid: z
+              .boolean()
+              .optional()
+              .describe("Whether to show the background grid (default: true)."),
+            showLegend: z
+              .boolean()
+              .optional()
+              .describe("Whether to show the legend (default: true if >1 series)."),
+            showDot: z
+              .boolean()
+              .optional()
+              .describe("Whether to show dots on line/area charts (default: true)."),
+            yAxisLabel: z
+              .string()
+              .optional()
+              .describe("Label text for the y-axis."),
+            xAxisLabel: z
+              .string()
+              .optional()
+              .describe("Label text for the x-axis."),
+            lineType: z
+              .enum(["basis", "linear", "monotone", "step"])
+              .optional()
+              .describe("Interpolation type for line/area charts (default: monotone)."),
+            barSize: z
+              .number()
+              .optional()
+              .describe("Custom thickness/width of bars in pixels."),
+          })
+          .optional()
+          .describe("Optional Recharts UI configurations for colors, stacking, grids, legends, dots, and labels."),
       }),
       responseFormat: "content_and_artifact" as const,
     },

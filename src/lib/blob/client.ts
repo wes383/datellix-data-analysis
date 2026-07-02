@@ -1,4 +1,5 @@
 import { put, del, list, head } from "@vercel/blob";
+import { createHash } from "node:crypto";
 
 /**
  * Vercel Blob file storage client
@@ -49,4 +50,14 @@ export async function getFileMeta(url: string) {
 export function blobPath(userId: string, sessionId: string, filename: string): string {
   const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
   return `uploads/${userId}/${sessionId}/${safeName}`;
+}
+
+/**
+ * Compute SHA-256 hash of a file's contents (hex digest).
+ * Used for deduplication: if a file with the same hash already exists as a
+ * data_source, we reuse it instead of uploading a second copy to Blob.
+ */
+export async function fileHash(file: Blob | File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  return createHash("sha256").update(Buffer.from(buffer)).digest("hex");
 }

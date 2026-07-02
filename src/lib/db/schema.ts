@@ -90,7 +90,6 @@ export interface Session {
   user_id: string;
   title: string | null;
   data_source_id: string | null;
-  sandbox_id: string | null;
   status: "active" | "paused" | "archived";
   created_at: string;
   updated_at: string;

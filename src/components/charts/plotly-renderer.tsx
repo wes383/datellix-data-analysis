@@ -1,9 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Maximize2, X } from "lucide-react";
+import { Download, Maximize2, X } from "lucide-react";
 
 /**
  * Plotly chart renderer (Phase 2 §2.3)
@@ -59,6 +59,11 @@ const TOP_MARGIN_NO_TITLE = 30;
 export function PlotlyRenderer({ figure, title }: PlotlyRendererProps) {
   const [hasMounted, setHasMounted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Ref to the inline Plot wrapper div. Plotly renders the graph DOM inside
+  // this element, so we pass it to Plotly.downloadImage for PNG export.
+  const inlineGraphRef = useRef<HTMLDivElement>(null);
+  // Ref to the actual Plotly graph DOM element.
+  const plotlyDivRef = useRef<any>(null);
 
   // Guard against SSR rendering of the dynamic component (defensive — the
   // dynamic import already sets ssr:false, but this ensures the Plot component
@@ -88,6 +93,24 @@ export function PlotlyRenderer({ figure, title }: PlotlyRendererProps) {
         Loading chart…
       </div>
     );
+  }
+
+  /** Download the inline chart as a PNG via Plotly.downloadImage. */
+  async function handleDownload() {
+    if (!plotlyDivRef.current) return;
+    const Plotly = (await import("plotly.js-dist-min")).default;
+    const filename = (title ?? "chart").replace(/[^\w-]+/g, "_") || "chart";
+    try {
+      await Plotly.downloadImage(plotlyDivRef.current, {
+        format: "png",
+        filename,
+        width: inlineGraphRef.current?.clientWidth ?? plotlyDivRef.current.clientWidth ?? 800,
+        height: CHART_HEIGHT,
+        scale: 2,
+      });
+    } catch (err) {
+      console.error("[plotly] downloadImage failed:", err);
+    }
   }
 
   const data = (figure.data ?? []) as unknown[];
@@ -140,32 +163,53 @@ export function PlotlyRenderer({ figure, title }: PlotlyRendererProps) {
           very tall charts from dominating the chat without squeezing the
           drawing area to the left. */}
       <div className="relative">
-        {/* Fullscreen button */}
-        <button
-          type="button"
-          onClick={() => setIsFullscreen(true)}
-          className="absolute right-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background/80 text-muted-foreground backdrop-blur-sm transition-colors hover:bg-background hover:text-foreground"
-          aria-label="Open chart in fullscreen"
-          title="Fullscreen"
-        >
-          <Maximize2 className="h-3.5 w-3.5" />
-        </button>
+        {/* Action buttons: Download PNG + Fullscreen */}
+        <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
+          <button
+            type="button"
+            onClick={handleDownload}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background/80 text-muted-foreground backdrop-blur-sm transition-colors hover:bg-background hover:text-foreground"
+            aria-label="Download chart as PNG"
+            title="Download PNG"
+          >
+            <Download className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsFullscreen(true)}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background/80 text-muted-foreground backdrop-blur-sm transition-colors hover:bg-background hover:text-foreground"
+            aria-label="Open chart in fullscreen"
+            title="Fullscreen"
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
 
         {title && (
-          <p className="mb-3 pr-10 font-display text-sm font-medium tracking-tight text-foreground">
+          <p className="mb-3 pr-20 font-display text-sm font-medium tracking-tight text-foreground">
             {title}
           </p>
         )}
 
         {/* Width-giving wrapper. Plotly's autosize reads the offsetWidth of
-            this element; `w-full` ensures it matches the artifact card. */}
-        <div className="w-full overflow-hidden rounded-md border border-border bg-background/40">
+            this element; `w-full` ensures it matches the artifact card. The
+            ref is used by handleDownload to call Plotly.downloadImage. */}
+        <div
+          ref={inlineGraphRef}
+          className="w-full overflow-hidden rounded-md border border-border bg-background/40"
+        >
           <Plot
             data={data}
             layout={inlineLayout}
             config={{ responsive: true, displayModeBar: false }}
             style={{ width: "100%", height: CHART_HEIGHT }}
             useResizeHandler
+            onInitialized={(figure, graphDiv) => {
+              plotlyDivRef.current = graphDiv;
+            }}
+            onUpdate={(figure, graphDiv) => {
+              plotlyDivRef.current = graphDiv;
+            }}
           />
         </div>
       </div>

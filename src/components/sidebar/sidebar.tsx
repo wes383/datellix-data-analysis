@@ -3,7 +3,7 @@
 import { useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Plus, Trash2, LogOut } from "lucide-react";
+import { Plus, Trash2, LogOut, Database, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { deleteSession, signOut } from "@/app/actions/sessions";
 import type { Session } from "@/lib/db/schema";
@@ -63,6 +63,32 @@ export function Sidebar({ sessions, userEmail }: SidebarProps) {
           <Plus className="h-4 w-4" />
           New session
         </Button>
+      </div>
+
+      {/* Fixed nav — Data sources / Usage */}
+      <div className="px-2 pb-2 pt-1">
+        <Link
+          href="/sources"
+          className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors ${
+            pathname.startsWith("/sources")
+              ? "bg-accent font-medium text-foreground"
+              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+          }`}
+        >
+          <Database className="h-3.5 w-3.5" />
+          Data sources
+        </Link>
+        <Link
+          href="/usage"
+          className={`mt-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors ${
+            pathname.startsWith("/usage")
+              ? "bg-accent font-medium text-foreground"
+              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+          }`}
+        >
+          <BarChart3 className="h-3.5 w-3.5" />
+          Usage
+        </Link>
       </div>
 
       {/* Session list */}
