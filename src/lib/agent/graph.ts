@@ -5,6 +5,7 @@ import { HumanMessage } from "@langchain/core/messages";
 import { createLLM } from "@/lib/agent/llm";
 import { retrieveSchema, retrieveSchemaMulti, type SchemaColumn } from "@/lib/agent/schema";
 import { createAgentTools, getDialectLabel, type AgentContext } from "@/lib/agent/tools";
+import type { SandboxProvider } from "@/lib/daytona/client";
 
 /**
  * ReAct agent graph — Phase 2 refactor
@@ -99,7 +100,11 @@ You have access to tools. Use them autonomously and as many times as needed to f
 3. If the query fails, read the error, fix the SQL (table/column names, dialect syntax), and retry. You may call \`retrieve_schema\` or \`list_tables\` again to confirm names.
 4. When the user asks for a visualization, call \`build_chart\` with an appropriate chartType and valid xKey/yKeys from the result columns.
 5. When the user asks about distributions, trends, or statistics, call \`summarize_data\` on the relevant query.
-6. After gathering what you need, write a clear, concise natural-language answer that references the data you found. Do not just dump raw rows — interpret them.
+6. For time series forecasting, call \`run_forecast\` with the SQL, date column, value column, horizon, and method (arima/ets/linear).
+7. For clustering, call \`run_cluster\` with the SQL, feature columns, method (kmeans/dbscan), and optional cluster count.
+8. For complex charts (3D, geographic, sankey, treemap, large scatter), call \`build_plotly_chart\` with SQL + Python code that creates a plotly figure and assigns it to \`fig\`.
+9. For custom analysis or data transformations beyond SQL, call \`run_python\` with Python code (pandas, duckdb, sklearn, statsmodels, matplotlib, plotly available). Optionally pass a SQL query to pre-load results as a pandas DataFrame \`df\`.
+10. After gathering what you need, write a clear, concise natural-language answer that references the data you found. Do not just dump raw rows — interpret them.
 
 Rules:
 - Only run SELECT / WITH...SELECT queries. Never INSERT/UPDATE/DELETE/DDL.
@@ -155,6 +160,12 @@ function formatSchemaForPrompt(schema: SchemaColumn[]): string {
  * @param params.dataSourceId      single-DB mode: bound DB data source id
  * @param params.dataSourceType    file | pg | mysql | bigquery | duckdb | sqlite | ""
  * @param params.fileDataSourceIds multi-file mode: bound file data source ids
+ * @param params.userId            auth user id — used by sandbox tools to log usage
+ * @param params.getSandbox        lazy resolver for a shared request-level sandbox.
+ *                                 When provided, all sandbox tool calls in this
+ *                                 ReAct turn reuse the same sandbox; the caller
+ *                                 owns creation and deletion. When omitted, each
+ *                                 runPython call falls back to ephemeral mode.
  */
 export async function* streamAgent(params: {
   sessionId: string;
@@ -162,14 +173,18 @@ export async function* streamAgent(params: {
   dataSourceId: string;
   dataSourceType: string;
   fileDataSourceIds: string[];
+  userId: string;
+  getSandbox?: SandboxProvider;
 }) {
-  const { sessionId, question, dataSourceId, dataSourceType, fileDataSourceIds } = params;
+  const { sessionId, question, dataSourceId, dataSourceType, fileDataSourceIds, userId, getSandbox } = params;
 
   const ctx: AgentContext = {
     sessionId,
     dataSourceId,
     dataSourceType,
     fileDataSourceIds,
+    userId,
+    getSandbox,
   };
   const hasDataSource = !!dataSourceId || fileDataSourceIds.length > 0;
 

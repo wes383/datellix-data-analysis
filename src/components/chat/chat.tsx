@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowUp, ChevronRight, Database, Loader2, Upload, Wrench, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import type { Message } from "@/lib/db/schema";
 import { createSession } from "@/app/actions/sessions";
@@ -50,10 +49,14 @@ interface StreamMessage {
   content?: string;
   // AIMessage reasoning_content token (collapsible CoT)
   thinking?: string;
-  // LLM started calling a tool
-  tool_call?: { id: string; name: string };
+  // LLM started calling a tool. For run_python the server may attach
+  // the source code directly (when args streamed fully before the id+name
+  // was announced) so the UI can render it on the very first paint.
+  tool_call?: { id: string; name: string; code?: string };
   // Tool finished executing
   tool_result?: { id: string; name: string; content: string };
+  // Intermediate progress for a long-running tool (e.g. run_python code preview)
+  tool_progress?: { id: string; name: string; type: string; code?: string };
   // Artifact produced by a content_and_artifact tool
   artifact?: ArtifactView;
   toolCallId?: string;
@@ -74,7 +77,14 @@ interface ChatMessage extends Message {
  *  Tool items carry `id` (tool_call_id) so a later tool_result event can fill
  *  in the content, and `completed` to toggle the running spinner. */
 type PendingItem =
-  | { kind: "tool"; id: string; tool: string; content: string; completed: boolean }
+  | {
+      kind: "tool";
+      id: string;
+      tool: string;
+      content: string;
+      completed: boolean;
+      code?: string;
+    }
   | { kind: "artifact"; artifact: ArtifactView }
   | { kind: "thinking"; content: string }
   | { kind: "text"; content: string };
@@ -105,7 +115,7 @@ export function Chat({
   // can disable its X button and show a spinner.
   const [removingFileId, setRemovingFileId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Derived streaming text (concatenation of all text items, for final persist)
   const pendingAssistant = pendingItems
@@ -208,17 +218,36 @@ export function Chat({
 
             // 1. Tool call announced — create a tool item with empty content
             //    and completed=false so the UI shows a running spinner.
+            //    The server may attach the run_python code directly on the
+            //    tool_call event (when args were complete at announcement
+            //    time) so the UI can render the code immediately.
             if (data.tool_call) {
               pushItem({
                 kind: "tool",
                 id: data.tool_call.id,
                 tool: data.tool_call.name,
                 content: "",
+                code: data.tool_call.code,
                 completed: false,
               });
             }
 
-            // 2. Tool result — find the previously-announced tool item by id
+            // 2a. Tool progress — intermediate update for long-running tools.
+            //     For run_python, this carries the code while Daytona is still
+            //     executing, so the user can see what is being run.
+            if (data.tool_progress) {
+              const tp = data.tool_progress;
+              const existing = items.find(
+                (it): it is Extract<PendingItem, { kind: "tool" }> =>
+                  it.kind === "tool" && it.id === tp.id,
+              );
+              if (existing && tp.code) {
+                existing.code = tp.code;
+                setPendingItems([...items]);
+              }
+            }
+
+            // 2b. Tool result — find the previously-announced tool item by id
             //    and fill in the content, marking it completed.
             if (data.tool_result) {
               const tr = data.tool_result;
@@ -293,8 +322,10 @@ export function Chat({
       inputRef.current?.focus();
       if (isNewSession && activeSessionId) {
         router.replace(`/chat/${activeSessionId}`);
-        router.refresh();
       }
+      // Always refresh so the sidebar reflects the latest session title
+      // (the API route updates the title from the first user message).
+      router.refresh();
     }
   }
 
@@ -424,7 +455,7 @@ export function Chat({
       {/* ============================================================
           Messages
           ============================================================ */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-6 py-8">
           {messages.length === 0 && !pendingAssistant && (
             <WelcomeState
@@ -464,20 +495,35 @@ export function Chat({
           ============================================================ */}
       <div className="border-t border-border bg-card/30">
         <form onSubmit={handleSubmit} className="mx-auto max-w-3xl px-6 py-4">
-          <div className="group flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 pr-2 transition-colors focus-within:border-primary">
-            <Input
+          <div className="group flex items-end gap-2 rounded-3xl border border-border bg-card pl-6 py-2 pr-2 transition-colors focus-within:border-primary">
+            <textarea
               ref={inputRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+                // Auto-resize: grow with content up to a max height, then scroll.
+                e.target.style.height = "auto";
+                e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
+              }}
+              onKeyDown={(e) => {
+                // Enter sends; Shift+Enter inserts a newline (default behavior).
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  if (input.trim() && !streaming) {
+                    e.currentTarget.form?.requestSubmit();
+                  }
+                }
+              }}
               placeholder="Ask anything about your data…"
               autoFocus
-              className="h-8 flex-1 border-0 bg-transparent px-0 font-sans text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              rows={1}
+              className="max-h-[200px] flex-1 resize-none border-0 bg-transparent px-0 py-1.5 font-sans text-sm shadow-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
             />
             <Button
               type="submit"
               size="icon"
               disabled={streaming || !input.trim()}
-              className="h-8 w-8 shrink-0 rounded-full p-0 font-medium"
+              className="h-8 w-8 shrink-0 self-end rounded-full p-0 font-medium"
               aria-label="Send"
             >
               {streaming ? (
@@ -487,9 +533,6 @@ export function Chat({
               )}
             </Button>
           </div>
-          <p className="mt-2 px-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            Press Enter to send · Shift+Enter for newline
-          </p>
         </form>
       </div>
     </div>
@@ -546,12 +589,15 @@ function attachInitialArtifacts(
           typeof seg.content === "string"
         ) {
           // Tool segments are distinct per tool_call_id — never merge.
+          // Preserve `code` (run_python source) so the UI can render the
+          // collapsible code block on replay.
           rebuilt.push({
             kind: "tool",
             id: typeof seg.id === "string" ? seg.id : "",
             tool: seg.tool,
             content: seg.content,
             completed: true,
+            code: typeof seg.code === "string" ? seg.code : undefined,
           });
         } else if (seg.kind === "thinking" && typeof seg.content === "string") {
           const last = rebuilt[rebuilt.length - 1];
@@ -794,55 +840,120 @@ function WelcomeState({
   onConnectDatabase: () => void;
   connectingDatabase: boolean;
 }) {
+  const [isDragging, setIsDragging] = useState(false);
+
   if (hasDataSource) return null;
 
+  // Accepted file extensions — must match the <input accept="..."> attribute.
+  const ACCEPTED_EXTENSIONS = [".csv", ".xlsx", ".xls", ".parquet"];
+
+  function isAcceptedFile(file: File): boolean {
+    const name = file.name.toLowerCase();
+    return ACCEPTED_EXTENSIONS.some((ext) => name.endsWith(ext));
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (uploading) return;
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    if (!isAcceptedFile(file)) {
+      toast.error(
+        `Unsupported file format. Accepted: ${ACCEPTED_EXTENSIONS.join(", ")}`,
+      );
+      return;
+    }
+    onUpload(file);
+  }
+
+  function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (uploading) return;
+    setIsDragging(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only clear the drag state when leaving the container itself (not when
+    // moving between child elements). relatedTarget is the element entering;
+    // if it's still inside the container, don't clear.
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragging(false);
+    }
+  }
+
   return (
-    <div className="mb-12 flex flex-col items-center justify-center rounded-lg border border-dashed border-border px-6 py-16 text-center">
-      <div className="flex items-center gap-3">
-        {!hasDataSource && (
+    <div
+      onDrop={handleDrop}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      className={`mb-12 flex flex-col items-center justify-center rounded-lg border border-dashed px-6 py-16 text-center transition-colors ${
+        isDragging
+          ? "border-primary bg-primary/5"
+          : "border-border"
+      }`}
+    >
+      {isDragging ? (
+        <div className="flex flex-col items-center gap-2 text-primary">
+          <Upload className="h-6 w-6" />
+          <p className="text-sm font-medium">
+            Drop your file to upload
+          </p>
+          <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+            CSV · XLSX · XLS · Parquet
+          </p>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3">
+          {!hasDataSource && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={connectingDatabase}
+              onClick={onConnectDatabase}
+            >
+              {connectingDatabase ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Database className="h-3.5 w-3.5" />
+              )}
+              {connectingDatabase ? "Connecting..." : "Connect a database"}
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
-            disabled={connectingDatabase}
-            onClick={onConnectDatabase}
+            disabled={uploading}
+            asChild
           >
-            {connectingDatabase ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {uploading ? (
+              <span>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Uploading
+              </span>
             ) : (
-              <Database className="h-3.5 w-3.5" />
+              <label className="cursor-pointer">
+                <Upload className="h-3.5 w-3.5" />
+                Upload file
+                <input
+                  type="file"
+                  className="hidden"
+                  accept=".csv,.xlsx,.xls,.parquet"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) onUpload(file);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
             )}
-            {connectingDatabase ? "Connecting..." : "Connect a database"}
           </Button>
-        )}
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={uploading}
-          asChild
-        >
-          {uploading ? (
-            <span>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Uploading
-            </span>
-          ) : (
-            <label className="cursor-pointer">
-              <Upload className="h-3.5 w-3.5" />
-              Upload file
-              <input
-                type="file"
-                className="hidden"
-                accept=".csv,.xlsx,.xls,.parquet"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) onUpload(file);
-                  e.target.value = "";
-                }}
-              />
-            </label>
-          )}
-        </Button>
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -909,6 +1020,7 @@ function MessageRow({
                   key={i}
                   tool={group.item.tool}
                   content={group.item.content}
+                  code={group.item.code}
                   running={!group.item.completed}
                 />
               );
@@ -989,6 +1101,7 @@ type SegmentGroup =
         tool: string;
         content: string;
         completed: boolean;
+        code?: string;
       };
     }
   | { type: "artifact"; item: { kind: "artifact"; artifact: ArtifactView } }
@@ -1020,6 +1133,7 @@ function groupSegments(segments: PendingItem[]): SegmentGroup[] {
           tool: seg.tool,
           content: seg.content,
           completed: seg.completed,
+          code: seg.code,
         },
       });
     } else if (seg.kind === "artifact") {
@@ -1039,26 +1153,27 @@ function groupSegments(segments: PendingItem[]): SegmentGroup[] {
   return groups;
 }
 
-/** Inline render of a single tool step. Collapsible after execution
- *  completes — only the title row (wrench + node name) is shown by
- *  default; click to expand the full content. During streaming,
- *  `defaultOpen` is set so the user sees live tool output, and `running`
- *  shows a spinner next to the tool name until the result arrives. */
+/** Inline render of a single tool step. Collapsible — only the title row
+ *  (wrench + node name) is shown by default; click to expand the full
+ *  content. During streaming, `defaultOpen` is set so the user sees live
+ *  tool output and the run_python code. When the tool finishes (running
+ *  flips to false), the panel auto-collapses to keep the chat history
+ *  tidy; the user can click to re-expand and view the code/output. */
 function ToolStepView({
   tool,
   content,
+  code,
   defaultOpen = false,
   running = false,
 }: {
   tool: string;
   content: string;
+  code?: string;
   defaultOpen?: boolean;
   running?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   // Auto-collapse as soon as the tool finishes (running flips to false).
-  // This makes each tool step fold up right when its result arrives,
-  // instead of waiting for the whole turn to end.
   useEffect(() => {
     if (!running) setOpen(false);
   }, [running]);
@@ -1082,10 +1197,19 @@ function ToolStepView({
           <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary/60" />
         )}
       </button>
-      {open && content && (
-        <p className="mt-1.5 whitespace-pre-wrap pl-5 font-mono text-xs leading-relaxed">
-          {content}
-        </p>
+      {open && (code || content) && (
+        <div className="mt-1.5 space-y-3 pl-5">
+          {code && (
+            <pre className="max-h-80 overflow-auto rounded-md border border-border bg-muted/40 p-3 font-mono text-xs leading-relaxed text-foreground">
+              <code>{code}</code>
+            </pre>
+          )}
+          {content && (
+            <p className="max-h-80 overflow-auto whitespace-pre-wrap font-mono text-xs leading-relaxed">
+              {content}
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
@@ -1164,6 +1288,7 @@ function StreamingItemsView({ items }: { items: PendingItem[] }) {
                 key={i}
                 tool={item.tool}
                 content={item.content}
+                code={item.code}
                 defaultOpen
                 running={!item.completed}
               />

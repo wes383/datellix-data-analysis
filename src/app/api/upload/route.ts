@@ -123,14 +123,6 @@ export async function POST(req: NextRequest) {
       configEncrypted,
       sessionId,
       meta: { format, size: file.size },
-      // Persist the Daytona sandbox_id so it survives server restarts
-      persistSandboxId: async (sandboxId: string) => {
-        await admin
-          .from("sessions")
-          .update({ sandbox_id: sandboxId })
-          .eq("id", sessionId)
-          .is("sandbox_id", null);
-      },
     });
     indexed = true;
   } catch (err) {

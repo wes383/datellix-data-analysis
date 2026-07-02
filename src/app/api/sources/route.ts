@@ -291,16 +291,6 @@ export async function POST(req: NextRequest) {
       configEncrypted,
       sessionId,
       meta,
-      // Persist sandbox_id for sandbox-based sources (duckdb/sqlite)
-      persistSandboxId: sessionId
-        ? async (sandboxId: string) => {
-            await admin
-              .from("sessions")
-              .update({ sandbox_id: sandboxId })
-              .eq("id", sessionId)
-              .is("sandbox_id", null);
-          }
-        : undefined,
     });
     indexed = true;
   } catch (err) {

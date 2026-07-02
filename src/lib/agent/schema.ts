@@ -4,7 +4,7 @@ import { BigQuery } from "@google-cloud/bigquery";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptConfig } from "@/lib/db/crypto";
 import { embedBatch, embedText } from "@/lib/llm/embeddings";
-import { runPython, uploadFileToSandbox, SANDBOX_DATA_DIR, destroySandboxById, killSandbox } from "@/lib/daytona/client";
+import { runPython, SANDBOX_DATA_DIR } from "@/lib/daytona/client";
 import type {
   PgConfig,
   FileConfig,
@@ -126,7 +126,6 @@ async function extractFileSchema(
   blobUrl: string,
   filename: string,
   format: string,
-  persistSandboxId?: (sandboxId: string) => Promise<void>,
 ): Promise<SchemaColumn[]> {
   // Download file from Vercel Blob (private blobs require Authorization header)
   const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
@@ -140,14 +139,14 @@ async function extractFileSchema(
   }
   const fileBuffer = Buffer.from(await fileResp.arrayBuffer());
 
-  // Upload to sandbox
   const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
   const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
-  await uploadFileToSandbox(sessionId, fileBuffer, remotePath, persistSandboxId);
 
-  // Run DuckDB schema extraction
+  // Run DuckDB schema extraction with the file staged in the ephemeral sandbox
   const code = buildSchemaExtractionCode(remotePath, format);
-  const result = await runPython(sessionId, code, persistSandboxId);
+  const result = await runPython(sessionId, code, {
+    files: [{ buffer: fileBuffer, remotePath }],
+  });
 
   if (result.exitCode !== 0) {
     throw new Error(`Schema extraction failed: ${result.stderr || result.stdout}`);
@@ -342,7 +341,7 @@ async function extractDuckdbFileSchema(
 ): Promise<SchemaColumn[]> {
   const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
   const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
-  // Stage the file first (download from Blob, upload to sandbox)
+  // Download file from Blob
   const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
   const fileResp = await fetch(config.blobUrl, {
     headers: blobToken ? { Authorization: `Bearer ${blobToken}` } : undefined,
@@ -351,7 +350,6 @@ async function extractDuckdbFileSchema(
     throw new Error(`Failed to download file from Blob: ${fileResp.status}`);
   }
   const fileBuffer = Buffer.from(await fileResp.arrayBuffer());
-  await uploadFileToSandbox(sessionId, fileBuffer, remotePath);
   const code = `
 import duckdb, json, sys
 con = duckdb.connect("${remotePath}", read_only=True)
@@ -367,7 +365,9 @@ except Exception as e:
     print(json.dumps({"error": str(e)}))
     sys.exit(1)
 `.trim();
-  const pyResult = await runPython(sessionId, code);
+  const pyResult = await runPython(sessionId, code, {
+    files: [{ buffer: fileBuffer, remotePath }],
+  });
   if (pyResult.exitCode !== 0) {
     throw new Error(`DuckDB file schema extraction failed: ${pyResult.stderr}`);
   }
@@ -391,7 +391,6 @@ async function extractSqliteFileSchema(
     throw new Error(`Failed to download file from Blob: ${fileResp.status}`);
   }
   const fileBuffer = Buffer.from(await fileResp.arrayBuffer());
-  await uploadFileToSandbox(sessionId, fileBuffer, remotePath);
   const code = `
 import duckdb, json, sys
 con = duckdb.connect()
@@ -409,7 +408,9 @@ except Exception as e:
     print(json.dumps({"error": str(e)}))
     sys.exit(1)
 `.trim();
-  const pyResult = await runPython(sessionId, code);
+  const pyResult = await runPython(sessionId, code, {
+    files: [{ buffer: fileBuffer, remotePath }],
+  });
   if (pyResult.exitCode !== 0) {
     throw new Error(`SQLite file schema extraction failed: ${pyResult.stderr}`);
   }
@@ -436,10 +437,8 @@ export async function indexDataSourceSchema(params: {
   configEncrypted: string;
   sessionId?: string;
   meta?: Record<string, unknown>;
-  /** Optional callback to persist the Daytona sandbox_id when a new sandbox is created */
-  persistSandboxId?: (sandboxId: string) => Promise<void>;
 }): Promise<void> {
-  const { dataSourceId, userId, type, configEncrypted, sessionId, meta, persistSandboxId } = params;
+  const { dataSourceId, userId, type, configEncrypted, sessionId, meta } = params;
 
   // 1. Extract schema based on source type
   let columns: SchemaColumn[] = [];
@@ -454,7 +453,6 @@ export async function indexDataSourceSchema(params: {
       config.blobUrl,
       config.filename,
       config.format,
-      persistSandboxId,
     );
   } else if (type === "pg") {
     const config = await decryptConfig<PgConfig>(configEncrypted);
@@ -514,22 +512,9 @@ export async function indexDataSourceSchema(params: {
     }
   }
 
-  // 4. Destroy sandbox after indexing (best-effort).
-  //    File, DuckDB, and SQLite sources use a temporary sandbox only for
-  //    schema extraction. The sandbox is NOT needed between requests:
-  //    ensureFileInSandbox() re-stages the file from Vercel Blob on every
-  //    query, so we can destroy the sandbox now to stop idle containers
-  //    accumulating and consuming the Daytona disk quota.
-  if (sessionId && (type === "file" || type === "duckdb" || type === "sqlite")) {
-    // killSandbox removes it from the in-process cache AND calls sandbox.delete().
-    // This covers the common case where schema indexing and the first query
-    // happen in the same server process.
-    try {
-      await killSandbox(sessionId);
-    } catch (err) {
-      console.error("[schema] failed to destroy sandbox after indexing:", err);
-    }
-  }
+  // 4. No sandbox cleanup needed — the ephemeral model in runPython()
+  //    creates and deletes the sandbox per call. Sandboxes no longer
+  //    persist between requests, so there's nothing to clean up here.
 }
 
 /**

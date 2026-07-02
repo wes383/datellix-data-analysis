@@ -1,6 +1,6 @@
 "use client";
 
-import { BarChart3, Code2, FileText, Table2 } from "lucide-react";
+import { BarChart3, Code2, FileText, LineChart, Table2 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -10,9 +10,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { RechartsRenderer } from "@/components/charts/recharts-renderer";
+import { PlotlyRenderer } from "@/components/charts/plotly-renderer";
 import type {
   ChartPayload,
   CodePayload,
+  ForecastPayload,
   SummaryPayload,
   TablePayload,
 } from "@/lib/agent/state";
@@ -20,8 +22,7 @@ import type {
 /**
  * Frontend artifact shape (mirrors the SSE stream payload from /api/chat).
  * The DB Artifact type uses `Record<string, unknown>` for payload; here we
- * narrow it to the typed union for rendering. "forecast" is included for
- * forward-compat with Phase 2 but rendered as a fallback in Phase 1.
+ * narrow it to the typed union for rendering.
  */
 export type ArtifactType =
   | "chart"
@@ -32,7 +33,12 @@ export type ArtifactType =
 
 export interface ArtifactView {
   type: ArtifactType;
-  payload: ChartPayload | TablePayload | CodePayload | SummaryPayload;
+  payload:
+    | ChartPayload
+    | TablePayload
+    | CodePayload
+    | SummaryPayload
+    | ForecastPayload;
   /** Source node that produced this artifact (for label) */
   node?: string;
 }
@@ -48,7 +54,7 @@ const ARTIFACT_META: Record<
   chart: { label: "Chart", icon: BarChart3 },
   table: { label: "Table", icon: Table2 },
   code: { label: "Code", icon: Code2 },
-  forecast: { label: "Forecast", icon: FileText },
+  forecast: { label: "Forecast", icon: LineChart },
   summary: { label: "Summary", icon: FileText },
 };
 
@@ -81,16 +87,29 @@ export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
 
 function renderBody(artifact: ArtifactView): React.ReactNode {
   switch (artifact.type) {
-    case "chart":
-      return (
-        <RechartsRenderer spec={artifact.payload as ChartPayload} />
-      );
+    case "chart": {
+      const payload = artifact.payload as ChartPayload;
+      // Plotly charts (3D, geo, sankey, etc.) use the dedicated Plotly renderer.
+      // Everything else falls back to Recharts.
+      if (payload.renderer === "plotly" && payload.plotlyFigure) {
+        return (
+          <PlotlyRenderer
+            figure={payload.plotlyFigure}
+            title={payload.title}
+          />
+        );
+      }
+      return <RechartsRenderer spec={payload} />;
+    }
 
     case "table":
       return <TableArtifactView payload={artifact.payload as TablePayload} />;
 
     case "code":
       return <CodeArtifactView payload={artifact.payload as CodePayload} />;
+
+    case "forecast":
+      return <ForecastArtifactView payload={artifact.payload as ForecastPayload} />;
 
     case "summary":
       return <SummaryArtifactView payload={artifact.payload as SummaryPayload} />;
@@ -180,7 +199,7 @@ function CodeArtifactView({ payload }: { payload: CodePayload }) {
           {title}
         </p>
       )}
-      <pre className="overflow-x-auto rounded-md border border-border bg-muted/40 p-3 font-mono text-xs leading-relaxed text-foreground">
+      <pre className="max-h-80 overflow-auto rounded-md border border-border bg-muted/40 p-3 font-mono text-xs leading-relaxed text-foreground">
         <code>{code}</code>
       </pre>
       {language && (
@@ -217,6 +236,69 @@ function SummaryArtifactView({ payload }: { payload: SummaryPayload }) {
           ))}
         </dl>
       )}
+    </div>
+  );
+}
+
+/* ============================================================
+    Forecast artifact (Phase 2 §2.2)
+    Renders a forecast result: a line chart with historical actuals +
+    future forecast values, plus MAE/RMSE/MAPE metrics below.
+    ============================================================ */
+
+function ForecastArtifactView({ payload }: { payload: ForecastPayload }) {
+  const { method, horizon, metrics, predictions, summary } = payload;
+
+  // Build chart data: one row per prediction entry. `actual` and `forecast`
+  // are separate series so Recharts draws them as two lines on the same axis.
+  // The forecast line naturally starts where actuals end; the small overlap
+  // region (holdout) shows both so the user can visually assess accuracy.
+  const chartData = predictions.map((p) => ({
+    date: p.date,
+    actual: p.actual,
+    forecast: p.forecast,
+  }));
+
+  return (
+    <div>
+      <p className="mb-3 text-sm leading-relaxed text-muted-foreground">
+        {summary}
+      </p>
+      <RechartsRenderer
+        spec={{
+          chartType: "line",
+          data: chartData,
+          xKey: "date",
+          yKeys: ["actual", "forecast"],
+          title: `${method.toUpperCase()} Forecast · ${horizon} periods`,
+        }}
+      />
+      <dl className="mt-3 grid grid-cols-3 gap-2 border-t border-border pt-3">
+        <div className="space-y-0.5">
+          <dt className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+            MAE
+          </dt>
+          <dd className="font-mono text-sm font-medium text-foreground">
+            {metrics.mae.toFixed(2)}
+          </dd>
+        </div>
+        <div className="space-y-0.5">
+          <dt className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+            RMSE
+          </dt>
+          <dd className="font-mono text-sm font-medium text-foreground">
+            {metrics.rmse.toFixed(2)}
+          </dd>
+        </div>
+        <div className="space-y-0.5">
+          <dt className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+            MAPE
+          </dt>
+          <dd className="font-mono text-sm font-medium text-foreground">
+            {metrics.mape.toFixed(1)}%
+          </dd>
+        </div>
+      </dl>
     </div>
   );
 }

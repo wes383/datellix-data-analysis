@@ -18,8 +18,13 @@ import type { SchemaColumn } from "@/lib/agent/schema";
 
 /** Artifact types produced by the Agent tools (rendered by the frontend) */
 export interface Artifact {
-  type: "chart" | "table" | "code" | "summary";
-  payload: ChartPayload | TablePayload | CodePayload | SummaryPayload;
+  type: "chart" | "table" | "code" | "summary" | "forecast";
+  payload:
+    | ChartPayload
+    | TablePayload
+    | CodePayload
+    | SummaryPayload
+    | ForecastPayload;
 }
 
 export interface ChartPayload {
@@ -29,6 +34,16 @@ export interface ChartPayload {
   xKey: string;
   yKeys: string[];
   title?: string;
+  /**
+   * Optional field name in `data` used to split scatter points into
+   * separately-colored series (e.g. "cluster" → one Scatter per cluster).
+   * Only honored by the scatter renderer; ignored for other chart types.
+   */
+  groupKey?: string;
+  /** Renderer to use in the frontend. Defaults to "recharts" for backward compat. */
+  renderer?: "recharts" | "plotly";
+  /** Plotly figure JSON (data + layout). Present only when renderer === "plotly". */
+  plotlyFigure?: Record<string, unknown>;
 }
 
 export interface TablePayload {
@@ -48,6 +63,23 @@ export interface CodePayload {
 export interface SummaryPayload {
   text: string;
   stats?: Record<string, number>;
+}
+
+/**
+ * Forecast artifact produced by the run_forecast tool.
+ * Contains the forecasting method, evaluation metrics, the full prediction
+ * series (historical actuals + future forecasts), and a human-readable summary.
+ */
+export interface ForecastPayload {
+  method: string;
+  horizon: number;
+  metrics: { mae: number; rmse: number; mape: number };
+  predictions: {
+    date: string;
+    actual: number | null;
+    forecast: number | null;
+  }[];
+  summary: string;
 }
 
 /** SQL query results returned by the execute_sql tool / SQL executors */

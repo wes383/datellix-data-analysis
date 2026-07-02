@@ -3,6 +3,11 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { streamAgent } from "@/lib/agent/graph";
 import {
+  createSandbox,
+  deleteSandbox,
+  type Sandbox,
+} from "@/lib/daytona/client";
+import {
   AIMessageChunk,
   ToolMessage,
   type BaseMessage,
@@ -48,6 +53,90 @@ function extractText(content: unknown): string {
       .join("");
   }
   return "";
+}
+
+/**
+ * Robustly extract the `code` field from a streaming JSON args buffer.
+ *
+ * LangChain streams tool-call args as JSON fragments. The naive approach
+ * (`buffer.trim().endsWith("}") && JSON.parse`) fails when the code string
+ * itself contains `}` (e.g. `f"{...}"` or a dict literal), because the
+ * fragment with that internal `}` parses to an incomplete object.
+ *
+ * This helper handles the streamed JSON robustly:
+ *   1. Find the substring after the first `"code":` key.
+ *   2. Skip the opening `"`.
+ *   3. Walk character-by-character honoring JSON string escapes
+ *      (`\\`, `\"`, and Unicode `\uXXXX`) so an escaped `}` inside the
+ *      code string is not treated as the string terminator.
+ *   4. Return the decoded string up to the real closing quote.
+ *
+ * Returns `undefined` if no parseable `"code"` field is found yet — caller
+ * should wait for the next chunk.
+ */
+function tryExtractCodeFromArgs(buffer: string): string | undefined {
+  if (!buffer) return undefined;
+  // Locate the "code" key. Accept both "code" and any whitespace padding.
+  const keyIdx = buffer.indexOf('"code"');
+  if (keyIdx === -1) return undefined;
+  // After the key, expect `:` then optional whitespace then `"`.
+  let i = keyIdx + '"code"'.length;
+  while (i < buffer.length && /\s/.test(buffer[i])) i++;
+  if (buffer[i] !== ":") return undefined;
+  i++;
+  while (i < buffer.length && /\s/.test(buffer[i])) i++;
+  if (buffer[i] !== '"') return undefined;
+  i++;
+
+  // Walk the string, honoring escapes. If we reach the end without finding
+  // the closing quote, the buffer is still streaming — return undefined.
+  let out = "";
+  while (i < buffer.length) {
+    const ch = buffer[i];
+    if (ch === "\\") {
+      // Escape sequence: \", \\, \/, \n, \r, \t, \b, \f, \uXXXX
+      if (i + 1 >= buffer.length) return undefined; // incomplete
+      const next = buffer[i + 1];
+      if (next === "u") {
+        if (i + 6 > buffer.length) return undefined; // incomplete
+        const hex = buffer.slice(i + 2, i + 6);
+        if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
+          // Malformed escape — abort and let caller wait for more data.
+          return undefined;
+        }
+        out += String.fromCharCode(parseInt(hex, 16));
+        i += 6;
+      } else if ("\"\\/nrtbf".includes(next)) {
+        out +=
+          next === "n"
+            ? "\n"
+            : next === "r"
+              ? "\r"
+              : next === "t"
+                ? "\t"
+                : next === "b"
+                  ? "\b"
+                  : next === "f"
+                    ? "\f"
+                    : next;
+        i += 2;
+      } else {
+        // Unknown escape — be conservative and include it as-is so the
+        // user at least sees the code; fall through to next char.
+        out += ch + next;
+        i += 2;
+      }
+    } else if (ch === '"') {
+      // End of string. Trim a trailing comma if any (valid JSON anyway).
+      return out;
+    } else {
+      out += ch;
+      i++;
+    }
+  }
+  // Hit the end of the buffer without finding the closing quote — still
+  // streaming.
+  return undefined;
 }
 
 export async function POST(req: NextRequest) {
@@ -116,6 +205,20 @@ export async function POST(req: NextRequest) {
     content: message,
   });
 
+  // 4b. If this is the first user message, use it as the session title so
+  //     the sidebar shows a meaningful name instead of "New analysis session".
+  //     The title is truncated to keep the sidebar tidy.
+  const { count: userMessageCount } = await supabase
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .eq("session_id", sessionId)
+    .eq("role", "user");
+
+  if (userMessageCount === 1) {
+    const title = message.trim().slice(0, 60);
+    await supabase.from("sessions").update({ title }).eq("id", sessionId);
+  }
+
   // 5. Stream the ReAct agent
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -131,7 +234,7 @@ export async function POST(req: NextRequest) {
       // after a page refresh. Stored on the assistant message's `tool_calls`
       // jsonb column. Thinking segments are filtered out before saving.
       const segments: Array<
-        | { kind: "tool"; id: string; tool: string; content: string }
+        | { kind: "tool"; id: string; tool: string; content: string; code?: string }
         | { kind: "text"; content: string }
         | { kind: "artifact"; artifactType: string; artifactIndex: number }
       > = [];
@@ -142,11 +245,45 @@ export async function POST(req: NextRequest) {
       // Map tool_call_id → segment reference, so tool_result can fill content.
       const toolSegments = new Map<
         string,
-        { kind: "tool"; id: string; tool: string; content: string }
+        { kind: "tool"; id: string; tool: string; content: string; code?: string }
       >();
+      // Accumulate streaming tool-call args so we can extract the code for
+      // run_python and emit it as a tool_progress event before execution ends.
+      const toolCallArgsBuffers = new Map<
+        string,
+        { name: string; buffer: string }
+      >();
+      const codeProgressAnnounced = new Set<string>();
+      // Tracks the most recently seen tool_call id. LangChain streams the id
+      // only on the first chunk for a tool call; subsequent chunks (args
+      // fragments) carry an empty id and need to be attributed to this id.
+      let currentToolCallId = "";
 
       const send = (data: unknown) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+      };
+
+      // ----------------------------------------------------------
+      // Request-level sandbox reuse
+      //
+      // One sandbox is shared across all tool calls in this ReAct turn
+      // (run_python / run_forecast / run_cluster / build_plotly_chart /
+      // execute_*_sql on file/duckdb/sqlite sources). The sandbox is
+      // created lazily on the first tool call that needs it (so trivial
+      // turns that only answer from prior knowledge pay zero creation
+      // latency) and deleted in the `finally` block below when the stream
+      // ends — whether successfully, via error, or via client disconnect.
+      //
+      // `sandboxPromise` is null until the first call to `getSandbox()`.
+      // Once set, every subsequent call returns the same promise, so all
+      // tool calls in this turn reuse the resolved sandbox.
+      // ----------------------------------------------------------
+      let sandboxPromise: Promise<Sandbox> | null = null;
+      const getSandbox = (): Promise<Sandbox> => {
+        if (!sandboxPromise) {
+          sandboxPromise = createSandbox();
+        }
+        return sandboxPromise;
       };
 
       try {
@@ -156,6 +293,8 @@ export async function POST(req: NextRequest) {
           dataSourceId,
           dataSourceType,
           fileDataSourceIds,
+          userId: user.id,
+          getSandbox,
         })) {
           // streamMode: ["messages"] yields [mode, payload] tuples.
           // payload is [message, metadata].
@@ -202,22 +341,94 @@ export async function POST(req: NextRequest) {
             //    see its id+name. Args stream in fragments but we don't need
             //    to forward them — the UI only shows the tool name while
             //    running, and the full result when the ToolMessage arrives.
+            //
+            // LangChain streaming pattern: the FIRST chunk for a tool call
+            // carries id + name (with empty args); subsequent chunks for the
+            // SAME tool call carry only the args fragment (id="" name="").
+            // We track the "current" tool_call_id so args fragments without
+            // an explicit id are attributed to the right tool call.
             const toolCallChunks = aiChunk.tool_call_chunks ?? [];
             for (const tc of toolCallChunks) {
               const id = tc.id;
               const name = tc.name;
+              const args = tc.args;
+
+              // Update the "current" tool call id when a chunk carries one.
+              // Subsequent chunks without id will reuse this.
+              if (id) {
+                currentToolCallId = id;
+              }
+              const effectiveId = id || currentToolCallId;
+
+              // Accumulate args so we can detect run_python code as early as
+              // possible and stream it to the UI before execution finishes.
+              if (effectiveId) {
+                if (!toolCallArgsBuffers.has(effectiveId)) {
+                  toolCallArgsBuffers.set(effectiveId, { name: name ?? "", buffer: "" });
+                }
+                const entry = toolCallArgsBuffers.get(effectiveId)!;
+                if (name) entry.name = name;
+                if (args && typeof args === "string") {
+                  entry.buffer += args;
+                }
+
+                // For run_python, extract the code from the args JSON as
+                // soon as it parses. We try parsing on every chunk so that
+                // even when the code string contains internal `}` (which
+                // would make a naive `endsWith("}")` early-detect), the
+                // full-buffer parse still works once the stream is complete.
+                if (
+                  entry.name === "run_python" &&
+                  !codeProgressAnnounced.has(effectiveId)
+                ) {
+                  const code = tryExtractCodeFromArgs(entry.buffer);
+                  if (typeof code === "string" && code.length > 0) {
+                    codeProgressAnnounced.add(effectiveId);
+                    send({
+                      tool_progress: {
+                        id: effectiveId,
+                        name: entry.name,
+                        type: "code",
+                        code,
+                      },
+                    });
+                  }
+                }
+              }
+
               if (id && name && !announcedToolCalls.has(id)) {
                 announcedToolCalls.add(id);
-                send({ tool_call: { id, name } });
+                // For run_python, attach the code to the tool_call event
+                // itself so the UI has the code from the very first moment
+                // (no flicker, no race with tool_progress). If the args
+                // buffer hasn't finished yet, code will arrive in a
+                // follow-up tool_progress event.
+                let code: string | undefined;
+                if (name === "run_python" && !codeProgressAnnounced.has(id)) {
+                  const extracted = tryExtractCodeFromArgs(
+                    toolCallArgsBuffers.get(id)?.buffer ?? "",
+                  );
+                  if (typeof extracted === "string" && extracted.length > 0) {
+                    code = extracted;
+                    codeProgressAnnounced.add(id);
+                  }
+                }
+                const toolCallPayload: { id: string; name: string; code?: string } = {
+                  id,
+                  name,
+                };
+                if (code) toolCallPayload.code = code;
+                send({ tool_call: toolCallPayload });
                 // Create a tool segment at this position so the rendered order
                 // matches the LLM's narration flow. Content is filled when the
                 // ToolMessage (tool_result) arrives.
-                const seg: { kind: "tool"; id: string; tool: string; content: string } = {
+                const seg: { kind: "tool"; id: string; tool: string; content: string; code?: string } = {
                   kind: "tool",
                   id,
                   tool: name,
                   content: "",
                 };
+                if (code) seg.code = code;
                 segments.push(seg);
                 toolSegments.set(id, seg);
               }
@@ -253,6 +464,34 @@ export async function POST(req: NextRequest) {
               segments.push(newSeg);
               toolSegments.set(id, newSeg);
               send({ tool_call: { id, name } });
+            }
+
+            // Last-chance fallback: if the segment still has no code but
+            // we have the full args buffer, try to extract it now. Covers
+            // the edge case where the LLM streamed the full args in a
+            // single chunk (so tool_call was sent with code already) or
+            // where tryExtractCodeFromArgs had a partial parse during
+            // streaming and only now has the complete buffer.
+            if (
+              name === "run_python" &&
+              seg &&
+              !seg.code &&
+              !codeProgressAnnounced.has(id)
+            ) {
+              const fullBuffer = toolCallArgsBuffers.get(id)?.buffer ?? "";
+              const extracted = tryExtractCodeFromArgs(fullBuffer);
+              if (typeof extracted === "string" && extracted.length > 0) {
+                seg.code = extracted;
+                codeProgressAnnounced.add(id);
+                send({
+                  tool_progress: {
+                    id,
+                    name,
+                    type: "code",
+                    code: extracted,
+                  },
+                });
+              }
             }
 
             send({ tool_result: { id, name, content } });
@@ -299,6 +538,20 @@ export async function POST(req: NextRequest) {
         const msg = err instanceof Error ? err.message : "Agent execution failed";
         send({ error: msg });
       } finally {
+        // Clean up the request-level sandbox if one was created. This runs
+        // on success, error, and (best-effort) client disconnect. If the
+        // sandbox creation itself failed, `sandboxPromise` is a rejected
+        // promise — awaiting it throws, the catch swallows it, and there's
+        // nothing to delete. If no sandbox tool was called, `sandboxPromise`
+        // is null and we skip cleanup entirely.
+        if (sandboxPromise) {
+          try {
+            const sb = await sandboxPromise;
+            await deleteSandbox(sb);
+          } catch (err) {
+            console.error("[chat] failed to clean up request sandbox:", err);
+          }
+        }
         controller.close();
       }
     },

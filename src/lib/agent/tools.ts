@@ -5,12 +5,14 @@ import { tool, type DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptConfig } from "@/lib/db/crypto";
-import { runPython, uploadFileToSandbox, SANDBOX_DATA_DIR } from "@/lib/daytona/client";
+import { runPython, SANDBOX_DATA_DIR, type SandboxProvider } from "@/lib/daytona/client";
 import { retrieveSchema, retrieveSchemaMulti, type SchemaColumn } from "@/lib/agent/schema";
+import { logUsage } from "@/lib/usage";
 import type {
   SqlResults,
   ChartPayload,
   SummaryPayload,
+  ForecastPayload,
   Artifact,
 } from "@/lib/agent/state";
 import type {
@@ -244,9 +246,11 @@ export async function executeDuckdbFileSql(
   sessionId: string,
   config: DuckdbFileConfig,
   sql: string,
+  getSandbox?: SandboxProvider,
 ): Promise<SqlResults> {
   const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
   const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
+  const stagedFile = await downloadFileForSandbox(config);
 
   const code = `
 import duckdb, json, sys
@@ -264,7 +268,7 @@ rows_str = [[str(v) if v is not None else None for v in row] for row in rows]
 print(json.dumps({"columns": columns, "rows": rows_str, "rowCount": len(result), "truncated": truncated}))
 `.trim();
 
-  const pyResult = await runPython(sessionId, code);
+  const pyResult = await runPython(sessionId, code, { files: [stagedFile], getSandbox });
   if (pyResult.exitCode !== 0) {
     throw new Error(`DuckDB file query failed: ${pyResult.stderr || pyResult.stdout}`);
   }
@@ -298,9 +302,11 @@ export async function executeSqliteFileSql(
   sessionId: string,
   config: SqliteFileConfig,
   sql: string,
+  getSandbox?: SandboxProvider,
 ): Promise<SqlResults> {
   const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
   const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
+  const stagedFile = await downloadFileForSandbox(config);
 
   const code = `
 import duckdb, json, sys
@@ -320,7 +326,7 @@ rows_str = [[str(v) if v is not None else None for v in row] for row in rows]
 print(json.dumps({"columns": columns, "rows": rows_str, "rowCount": len(result), "truncated": truncated}))
 `.trim();
 
-  const pyResult = await runPython(sessionId, code);
+  const pyResult = await runPython(sessionId, code, { files: [stagedFile], getSandbox });
   if (pyResult.exitCode !== 0) {
     throw new Error(`SQLite file query failed: ${pyResult.stderr || pyResult.stdout}`);
   }
@@ -422,10 +428,12 @@ export async function executeFileSql(
   sessionId: string,
   config: FileConfig,
   sql: string,
+  getSandbox?: SandboxProvider,
 ): Promise<SqlResults> {
   const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
   const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
   const viewName = safeName.replace(/\.[^.]+$/, "");
+  const stagedFile = await downloadFileForSandbox(config);
 
   const code = `
 import duckdb, json, sys
@@ -446,7 +454,7 @@ rows_str  = [[str(v) if v is not None else None for v in row] for row in rows]
 print(json.dumps({"columns": columns, "rows": rows_str, "rowCount": len(result), "truncated": truncated}))
 `.trim();
 
-  const pyResult = await runPython(sessionId, code);
+  const pyResult = await runPython(sessionId, code, { files: [stagedFile], getSandbox });
   if (pyResult.exitCode !== 0) {
     throw new Error(`DuckDB query failed: ${pyResult.stderr || pyResult.stdout}`);
   }
@@ -489,10 +497,12 @@ export async function executeMultiFileSql(
   sessionId: string,
   files: FileConfig[],
   sql: string,
+  getSandbox?: SandboxProvider,
 ): Promise<SqlResults> {
   // Disambiguate duplicate stems by appending _2, _3, etc.
   const usedNames = new Set<string>();
   const viewDefs: { viewName: string; remotePath: string; format: string }[] = [];
+  const stagedFiles: Array<{ buffer: Buffer; remotePath: string }> = [];
 
   for (const config of files) {
     const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -505,6 +515,9 @@ export async function executeMultiFileSql(
     }
     usedNames.add(viewName);
     viewDefs.push({ viewName, remotePath, format: config.format });
+    // Download each file from Blob for staging in the ephemeral sandbox.
+    const staged = await downloadFileForSandbox(config);
+    stagedFiles.push(staged);
   }
 
   // Generate one load + register statement per file
@@ -534,7 +547,7 @@ rows_str  = [[str(v) if v is not None else None for v in row] for row in rows]
 print(json.dumps({"columns": columns, "rows": rows_str, "rowCount": len(result), "truncated": truncated}))
 `.trim();
 
-  const pyResult = await runPython(sessionId, code);
+  const pyResult = await runPython(sessionId, code, { files: stagedFiles, getSandbox });
   if (pyResult.exitCode !== 0) {
     throw new Error(`DuckDB multi-file query failed: ${pyResult.stderr || pyResult.stdout}`);
   }
@@ -566,6 +579,7 @@ print(json.dumps({"columns": columns, "rows": rows_str, "rowCount": len(result),
 export async function summarizeData(
   sessionId: string,
   sqlResults: SqlResults,
+  getSandbox?: SandboxProvider,
 ): Promise<SummaryPayload> {
   // Serialize the query results for Python
   const dataJson = JSON.stringify({
@@ -611,7 +625,7 @@ result = {
 print(json.dumps(result, default=str))
 `.trim();
 
-  const pyResult = await runPython(sessionId, code);
+  const pyResult = await runPython(sessionId, code, { getSandbox });
   if (pyResult.exitCode !== 0) {
     // If summarization fails, return a basic summary
     return {
@@ -699,21 +713,15 @@ export function buildChartPayload(
 }
 
 // ============================================================
-// File staging helpers
+// File download helpers
 // ============================================================
 
-/**
- * Ensure a file is staged in the sandbox (upload if not already there).
- * Called before file-based queries to make sure the file is available.
- */
-export async function ensureFileInSandbox(
-  sessionId: string,
-  config: FileConfig,
-): Promise<void> {
-  // The file is uploaded during schema indexing, but if the sandbox was
-  // recreated (e.g., session resumed), we need to re-upload.
-  // We try a quick check: if the file exists, skip. For simplicity, we just
-  // re-upload (idempotent — uploadFile overwrites).
+/** Download a file from Vercel Blob and return { buffer, remotePath } for
+ *  staging in the ephemeral sandbox. All file-based configs share the same
+ *  blobUrl + filename shape, so one helper covers all types. */
+async function downloadFileForSandbox(
+  config: FileConfig | DuckdbFileConfig | SqliteFileConfig,
+): Promise<{ buffer: Buffer; remotePath: string }> {
   const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
   const fileResp = await fetch(config.blobUrl, {
     headers: blobToken
@@ -726,47 +734,7 @@ export async function ensureFileInSandbox(
   const fileBuffer = Buffer.from(await fileResp.arrayBuffer());
   const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
   const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
-  await uploadFileToSandbox(sessionId, fileBuffer, remotePath);
-}
-
-/** Ensure a .duckdb file is staged in the sandbox (upload if not present). */
-export async function ensureDuckdbFileInSandbox(
-  sessionId: string,
-  config: DuckdbFileConfig,
-): Promise<void> {
-  const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
-  const fileResp = await fetch(config.blobUrl, {
-    headers: blobToken
-      ? { Authorization: `Bearer ${blobToken}` }
-      : undefined,
-  });
-  if (!fileResp.ok) {
-    throw new Error(`Failed to download file from Blob: ${fileResp.status}`);
-  }
-  const fileBuffer = Buffer.from(await fileResp.arrayBuffer());
-  const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
-  await uploadFileToSandbox(sessionId, fileBuffer, remotePath);
-}
-
-/** Ensure a .sqlite/.db file is staged in the sandbox (upload if not present). */
-export async function ensureSqliteFileInSandbox(
-  sessionId: string,
-  config: SqliteFileConfig,
-): Promise<void> {
-  const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
-  const fileResp = await fetch(config.blobUrl, {
-    headers: blobToken
-      ? { Authorization: `Bearer ${blobToken}` }
-      : undefined,
-  });
-  if (!fileResp.ok) {
-    throw new Error(`Failed to download file from Blob: ${fileResp.status}`);
-  }
-  const fileBuffer = Buffer.from(await fileResp.arrayBuffer());
-  const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
-  await uploadFileToSandbox(sessionId, fileBuffer, remotePath);
+  return { buffer: fileBuffer, remotePath };
 }
 
 // ============================================================
@@ -782,6 +750,15 @@ export interface AgentContext {
   dataSourceType: string;
   /** Multi-file mode: bound file data source ids. Empty in single-DB mode. */
   fileDataSourceIds: string[];
+  /** Auth user id — used by sandbox tools to log usage to `usage_logs`. */
+  userId: string;
+  /**
+   * Lazy resolver for a shared request-level sandbox. When provided, all
+   * tool calls in this ReAct turn reuse the same sandbox (created on first
+   * use, deleted by the route handler when the stream ends). When omitted,
+   * each `runPython` call falls back to ephemeral create+delete.
+   */
+  getSandbox?: SandboxProvider;
 }
 
 /** Human-readable SQL dialect label, derived from the data source type. */
@@ -838,29 +815,37 @@ function formatResultsPreview(results: SqlResults): string {
 }
 
 /**
- * Build the 5 LangChain tools the ReAct agent can call, bound to a specific
+ * Build the LangChain tools the ReAct agent can call, bound to a specific
  * session's data source context. Configs are loaded once here and closed over
  * by the tools, so each tool call doesn't re-fetch them.
  *
  * Tools:
- *   - list_tables:    list all table names in the bound data source(s)
- *   - retrieve_schema: pgvector-retrieve columns relevant to a question
- *   - execute_sql:    validate + run a SELECT; returns a table artifact
- *   - summarize_data: run a SELECT then pandas describe + outlier detection
- *   - build_chart:    run a SELECT then build a Recharts payload
+ *   - list_tables:        list all table names in the bound data source(s)
+ *   - retrieve_schema:    pgvector-retrieve columns relevant to a question
+ *   - execute_sql:        validate + run a SELECT; returns a table artifact
+ *   - summarize_data:     run a SELECT then pandas describe + outlier detection
+ *   - build_chart:        run a SELECT then build a Recharts payload
+ *   - run_python:         execute arbitrary Python in the sandbox (Phase 2 §2.1)
+ *   - run_forecast:       ARIMA/ETS/linear time series forecasting (Phase 2 §2.2)
+ *   - run_cluster:        KMeans/DBSCAN clustering with PCA 2D viz (Phase 2 §2.2)
+ *   - build_plotly_chart: generate complex Plotly charts (Phase 2 §2.3)
  *
- * execute_sql / summarize_data / build_chart use responseFormat
- * "content_and_artifact": they return [textContent, artifact] tuples so the
- * LLM gets concise text to reason with while the UI receives a rich artifact
- * (table / summary / chart) to render inline.
+ * execute_sql / summarize_data / build_chart / run_python / run_forecast /
+ * run_cluster / build_plotly_chart use responseFormat "content_and_artifact":
+ * they return [textContent, artifact] tuples so the LLM gets concise text to
+ * reason with while the UI receives a rich artifact to render inline.
  */
 export async function createAgentTools(
   ctx: AgentContext,
 ): Promise<DynamicStructuredTool[]> {
   const admin = createAdminClient();
 
-  // Load data source configs once. File mode stages every bound file in the
-  // sandbox up front; DB mode decrypts the connection config.
+  // Load data source configs once. File mode stores configs for later
+  // per-call staging (download + upload in runPython); DB mode decrypts
+  // the connection config. No sandbox is created here — request-level
+  // reuse lazily creates one on the first runPython call (via
+  // ctx.getSandbox) and shares it across the whole ReAct turn; if
+  // ctx.getSandbox is absent, runPython falls back to ephemeral mode.
   let fileConfigs: FileConfig[] = [];
   let dbType = "";
   let dbConfig:
@@ -885,7 +870,6 @@ export async function createAgentTools(
     for (const row of dsRows) {
       const cfg = await decryptConfig<FileConfig>(row.config_encrypted);
       fileConfigs.push(cfg);
-      await ensureFileInSandbox(ctx.sessionId, cfg);
     }
   } else if (ctx.dataSourceId) {
     const { data: ds, error } = await admin
@@ -900,12 +884,6 @@ export async function createAgentTools(
     dbConfig = await decryptConfig<
       PgConfig | MysqlConfig | BigQueryConfig | DuckdbFileConfig | SqliteFileConfig
     >(ds.config_encrypted);
-
-    if (dbType === "duckdb") {
-      await ensureDuckdbFileInSandbox(ctx.sessionId, dbConfig as DuckdbFileConfig);
-    } else if (dbType === "sqlite") {
-      await ensureSqliteFileInSandbox(ctx.sessionId, dbConfig as SqliteFileConfig);
-    }
   }
 
   const dialectLabel = dialectLabelFor(ctx.dataSourceType || dbType);
@@ -913,13 +891,13 @@ export async function createAgentTools(
   /** Dispatch a validated SQL string to the right executor by source type. */
   const runSql = async (sql: string): Promise<SqlResults> => {
     if (ctx.dataSourceType === "file") {
-      return executeMultiFileSql(ctx.sessionId, fileConfigs, sql);
+      return executeMultiFileSql(ctx.sessionId, fileConfigs, sql, ctx.getSandbox);
     }
     if (dbType === "pg") return executePgSql(dbConfig as PgConfig, sql);
     if (dbType === "mysql") return executeMysqlSql(dbConfig as MysqlConfig, sql);
     if (dbType === "bigquery") return executeBigQuerySql(dbConfig as BigQueryConfig, sql);
-    if (dbType === "duckdb") return executeDuckdbFileSql(ctx.sessionId, dbConfig as DuckdbFileConfig, sql);
-    if (dbType === "sqlite") return executeSqliteFileSql(ctx.sessionId, dbConfig as SqliteFileConfig, sql);
+    if (dbType === "duckdb") return executeDuckdbFileSql(ctx.sessionId, dbConfig as DuckdbFileConfig, sql, ctx.getSandbox);
+    if (dbType === "sqlite") return executeSqliteFileSql(ctx.sessionId, dbConfig as SqliteFileConfig, sql, ctx.getSandbox);
     throw new Error(`SQL execution not supported for data source type: ${dbType}`);
   };
 
@@ -1059,7 +1037,7 @@ export async function createAgentTools(
       }
       try {
         const results = await runSql(sql);
-        const summary = await summarizeData(ctx.sessionId, results);
+        const summary = await summarizeData(ctx.sessionId, results, ctx.getSandbox);
         const artifact: Artifact = {
           type: "summary",
           payload: { text: summary.text, stats: summary.stats },
@@ -1146,7 +1124,545 @@ export async function createAgentTools(
     },
   );
 
-  return [listTablesTool, retrieveSchemaTool, executeSqlTool, summarizeDataTool, buildChartTool];
+  // ----------------------------------------------------------
+  // Shared sandbox usage callback — logs each Python execution's
+  // elapsed seconds to the usage_logs table. Used by the four
+  // Phase 2 tools below (run_python / run_forecast / run_cluster /
+  // build_plotly_chart).
+  // ----------------------------------------------------------
+  const onSandboxUsage = async (seconds: number): Promise<void> => {
+    await logUsage({
+      userId: ctx.userId,
+      sessionId: ctx.sessionId,
+      sandboxSeconds: seconds,
+      source: "daytona",
+    });
+  };
+
+  // ----------------------------------------------------------
+  // Tool 6: run_python (Phase 2 §2.1)
+  // Execute arbitrary Python in the sandbox. Optionally pre-load a
+  // SQL query result as a pandas DataFrame variable `df`.
+  // ----------------------------------------------------------
+  const runPythonTool = tool(
+    async ({ code, sql }) => {
+      let preamble = "";
+      if (sql) {
+        const validation = validateSelectSql(sql);
+        if (!validation.ok) {
+          return [
+            `SQL validation failed: ${validation.reason}`,
+            null,
+          ] as [string, null];
+        }
+        try {
+          const results = await runSql(sql);
+          const dataJson = JSON.stringify({
+            columns: results.columns,
+            rows: results.rows,
+          });
+          preamble = `
+import pandas as pd, json
+_parsed = json.loads(${JSON.stringify(dataJson)})
+df = pd.DataFrame(_parsed["rows"], columns=_parsed["columns"])
+`;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return [
+            `SQL pre-load failed: ${msg}\nSQL: ${sql}`,
+            null,
+          ] as [string, null];
+        }
+      }
+      try {
+        const result = await runPython(
+          ctx.sessionId,
+          preamble + "\n" + code,
+          { onUsage: onSandboxUsage, getSandbox: ctx.getSandbox },
+        );
+        if (result.exitCode !== 0) {
+          return [
+            `Python execution failed (exit ${result.exitCode}):\n${result.stderr || result.stdout}`,
+            null,
+          ] as [string, null];
+        }
+        const stdout = result.stdout || "(no output)";
+        // The code is streamed to the UI *before* execution starts via
+        // tool_progress events emitted from route.ts as soon as the LLM
+        // finishes writing the tool-call args. This tool only returns the
+        // output so we don't duplicate the code in the final tool result.
+        return [stdout, null] as [string, null];
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return [`Python execution error: ${msg}`, null] as [string, null];
+      }
+    },
+    {
+      name: "run_python",
+      description:
+        "Execute Python code in the sandbox (pandas, duckdb, sklearn, statsmodels, matplotlib, plotly available). " +
+        "Optionally provide a SQL query to pre-load results as a pandas DataFrame variable `df`. " +
+        "Print results to stdout with print(). Useful for complex transformations, feature engineering, " +
+        "custom analysis, and generating Plotly figures. The code runs in an isolated sandbox. " +
+        "IMPORTANT: Do NOT call fig.show() — the sandbox has no display and the figure will be lost. " +
+        "To render a Plotly chart in the chat, use the build_plotly_chart tool instead, which captures " +
+        "the `fig` variable and streams it to the UI as a renderable artifact.",
+      schema: z.object({
+        code: z
+          .string()
+          .describe(
+            "Python code to execute. If SQL is provided, `df` is available as a pandas DataFrame.",
+          ),
+        sql: z
+          .string()
+          .optional()
+          .describe(
+            "Optional read-only SELECT to pre-load results as `df` before running the code.",
+          ),
+      }),
+      responseFormat: "content_and_artifact" as const,
+    },
+  );
+
+  // ----------------------------------------------------------
+  // Tool 7: run_forecast (Phase 2 §2.2)
+  // Time series forecasting via statsmodels (ARIMA / ETS) or
+  // sklearn (linear). Evaluates on a holdout, then refits on the
+  // full series and forecasts `horizon` future periods. Returns a
+  // forecast artifact with predictions + metrics.
+  // ----------------------------------------------------------
+  const runForecastTool = tool(
+    async ({ sql, dateColumn, valueColumn, horizon, method }) => {
+      const validation = validateSelectSql(sql);
+      if (!validation.ok) {
+        return [
+          `SQL validation failed: ${validation.reason}`,
+          null,
+        ] as [string, null];
+      }
+      try {
+        const results = await runSql(sql);
+        const dataJson = JSON.stringify({
+          columns: results.columns,
+          rows: results.rows,
+        });
+
+        const pythonCode = `
+import pandas as pd, json, sys, warnings
+import numpy as np
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+
+# Suppress all warnings to keep stdout clean for JSON.parse. statsmodels,
+# sklearn, and pandas emit ConvergenceWarning / DeprecationWarning to
+# stdout/stderr that would otherwise corrupt the JSON output.
+warnings.filterwarnings("ignore")
+
+_parsed = json.loads(${JSON.stringify(dataJson)})
+df = pd.DataFrame(_parsed["rows"], columns=_parsed["columns"])
+df[${JSON.stringify(dateColumn)}] = pd.to_datetime(df[${JSON.stringify(dateColumn)}], errors='coerce')
+df = df.dropna(subset=[${JSON.stringify(dateColumn)}])
+df = df.sort_values(${JSON.stringify(dateColumn)}).reset_index(drop=True)
+df[${JSON.stringify(valueColumn)}] = pd.to_numeric(df[${JSON.stringify(valueColumn)}], errors='coerce')
+series = df.dropna(subset=[${JSON.stringify(valueColumn)}]).reset_index(drop=True)
+
+horizon = ${horizon}
+method = ${JSON.stringify(method)}
+
+if len(series) <= horizon * 2:
+    result = {"error": "Not enough data points for forecasting with holdout evaluation"}
+    print(json.dumps(result)); sys.exit(0)
+
+train = series.iloc[:-horizon]
+test = series.iloc[-horizon:]
+
+if method == "arima":
+    from statsmodels.tsa.arima.model import ARIMA
+    model = ARIMA(train[${JSON.stringify(valueColumn)}].astype(float), order=(1,1,1))
+    fitted = model.fit()
+    fc = fitted.forecast(steps=horizon)
+elif method == "ets":
+    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+    model = ExponentialSmoothing(train[${JSON.stringify(valueColumn)}].astype(float), trend='add')
+    fitted = model.fit()
+    fc = fitted.forecast(steps=horizon)
+else:
+    from sklearn.linear_model import LinearRegression
+    X = np.arange(len(train)).reshape(-1, 1)
+    lr = LinearRegression().fit(X, train[${JSON.stringify(valueColumn)}].astype(float))
+    fc = lr.predict(np.arange(len(train), len(train) + horizon).reshape(-1, 1))
+
+test_vals = test[${JSON.stringify(valueColumn)}].astype(float).values
+mae = float(mean_absolute_error(test_vals, fc))
+rmse = float(np.sqrt(mean_squared_error(test_vals, fc)))
+nonzero = test_vals != 0
+mape = float(np.mean(np.abs((test_vals[nonzero] - fc[nonzero]) / test_vals[nonzero])) * 100) if nonzero.any() else 0.0
+
+# Refit on full data and forecast future
+if method == "arima":
+    model_full = ARIMA(series[${JSON.stringify(valueColumn)}].astype(float), order=(1,1,1))
+    fitted_full = model_full.fit()
+    future_fc = fitted_full.forecast(steps=horizon)
+elif method == "ets":
+    model_full = ExponentialSmoothing(series[${JSON.stringify(valueColumn)}].astype(float), trend='add')
+    fitted_full = model_full.fit()
+    future_fc = fitted_full.forecast(steps=horizon)
+else:
+    X_full = np.arange(len(series)).reshape(-1, 1)
+    lr_full = LinearRegression().fit(X_full, series[${JSON.stringify(valueColumn)}].astype(float))
+    future_fc = lr_full.predict(np.arange(len(series), len(series) + horizon).reshape(-1, 1))
+
+# Infer frequency from the date column. If inference fails (e.g. yearly data
+# with only 1-year gaps), fall back to "YS" for year-start or "D" otherwise.
+# Without a valid freq string, pd.date_range with a string start date would
+# fall back to a numeric offset and crash with a TypeError when the start
+# is a Timestamp and the offset is a string.
+inferred_freq = pd.infer_freq(series[${JSON.stringify(dateColumn)}])
+if inferred_freq is None:
+    # Try common yearly fallback: if the median gap between consecutive
+    # dates is ~1 year, use "YS" (year start); otherwise default to "D".
+    deltas = series[${JSON.stringify(dateColumn)}].diff().dropna().dt.days
+    if len(deltas) > 0 and float(deltas.median()) >= 360:
+        inferred_freq = "YS"
+    else:
+        inferred_freq = "D"
+
+last_date = series[${JSON.stringify(dateColumn)}].iloc[-1]
+future_dates = pd.date_range(start=last_date, periods=horizon + 1, freq=inferred_freq)[1:]
+
+predictions = []
+for _, row in series.iterrows():
+    predictions.append({"date": str(row[${JSON.stringify(dateColumn)}].date()), "actual": float(row[${JSON.stringify(valueColumn)}]), "forecast": None})
+for dt, val in zip(future_dates, future_fc):
+    predictions.append({"date": str(dt.date()), "actual": None, "forecast": float(val)})
+
+result = {
+    "method": method,
+    "horizon": horizon,
+    "metrics": {"mae": mae, "rmse": rmse, "mape": mape},
+    "predictions": predictions,
+    "summary": f"{method.upper()} forecast for {horizon} periods. Holdout metrics: MAE={mae:.2f}, RMSE={rmse:.2f}, MAPE={mape:.1f}%."
+}
+print(json.dumps(result, default=str))
+`.trim();
+
+        const pyResult = await runPython(
+          ctx.sessionId,
+          pythonCode,
+          { onUsage: onSandboxUsage, getSandbox: ctx.getSandbox },
+        );
+        if (pyResult.exitCode !== 0) {
+          return [
+            `Forecast failed: ${pyResult.stderr || pyResult.stdout}`,
+            null,
+          ] as [string, null];
+        }
+        const parsed = JSON.parse(pyResult.stdout) as ForecastPayload & {
+          error?: string;
+        };
+        if (parsed.error) {
+          return [`Forecast error: ${parsed.error}`, null] as [string, null];
+        }
+        const artifact: Artifact = { type: "forecast", payload: parsed };
+        return [parsed.summary, artifact] as [string, Artifact];
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return [`Forecast error: ${msg}`, null] as [string, null];
+      }
+    },
+    {
+      name: "run_forecast",
+      description:
+        "Run time series forecasting on query results. Supports ARIMA, ETS (exponential smoothing), and linear regression. " +
+        "Evaluates on a holdout set and reports MAE/RMSE/MAPE, then forecasts future periods. " +
+        "Returns a forecast artifact with historical actuals + future predictions and evaluation metrics. " +
+        "The SQL must return a date/time column and a numeric value column.",
+      schema: z.object({
+        sql: z.string().describe("Read-only SELECT returning the time series data."),
+        dateColumn: z.string().describe("Column name containing dates/timestamps."),
+        valueColumn: z.string().describe("Column name containing the numeric value to forecast."),
+        horizon: z.number().int().min(1).max(90).describe("Number of future periods to forecast."),
+        method: z.enum(["arima", "ets", "linear"]).describe("Forecasting method."),
+      }),
+      responseFormat: "content_and_artifact" as const,
+    },
+  );
+
+  // ----------------------------------------------------------
+  // Tool 8: run_cluster (Phase 2 §2.2)
+  // KMeans / DBSCAN clustering on query results. Reduces features
+  // to 2D via PCA and returns a Recharts scatter chart colored by
+  // cluster label, plus a textual summary.
+  // ----------------------------------------------------------
+  const runClusterTool = tool(
+    async ({ sql, features, method, nClusters }) => {
+      const validation = validateSelectSql(sql);
+      if (!validation.ok) {
+        return [
+          `SQL validation failed: ${validation.reason}`,
+          null,
+        ] as [string, null];
+      }
+      try {
+        const results = await runSql(sql);
+        const dataJson = JSON.stringify({
+          columns: results.columns,
+          rows: results.rows,
+        });
+        const featuresJson = JSON.stringify(features);
+        const methodJson = JSON.stringify(method);
+        const kVal = nClusters ?? 3;
+
+        const pythonCode = `
+import pandas as pd, json, sys
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans, DBSCAN
+
+_parsed = json.loads(${JSON.stringify(dataJson)})
+df = pd.DataFrame(_parsed["rows"], columns=_parsed["columns"])
+features = ${featuresJson}
+method = ${methodJson}
+
+for f in features:
+    df[f] = pd.to_numeric(df[f], errors='coerce')
+X = df[features].dropna()
+if len(X) < 2:
+    result = {"error": "Not enough valid numeric rows for clustering"}
+    print(json.dumps(result)); sys.exit(0)
+
+X_scaled = StandardScaler().fit_transform(X.values)
+
+if method == "dbscan":
+    clusterer = DBSCAN(eps=0.5, min_samples=5)
+    labels = clusterer.fit_predict(X_scaled)
+else:
+    k = ${kVal}
+    clusterer = KMeans(n_clusters=k, n_init=10, random_state=42)
+    labels = clusterer.fit_predict(X_scaled)
+
+pca = PCA(n_components=2)
+coords = pca.fit_transform(X_scaled)
+
+chart_data = []
+for i, (x, y) in enumerate(coords):
+    chart_data.append({"x": float(x), "y": float(y), "cluster": int(labels[i])})
+
+n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+n_noise = int(sum(labels == -1))
+
+summary = (
+    f"{method} clustering found {n_clusters} cluster(s) across {len(labels)} points"
+    + (f", {n_noise} noise points" if n_noise > 0 else "")
+    + f". Features: {', '.join(features)}."
+)
+
+result = {
+    "chartData": chart_data,
+    "nClusters": n_clusters,
+    "nNoise": n_noise,
+    "nPoints": len(labels),
+    "method": method,
+    "summary": summary
+}
+print(json.dumps(result, default=str))
+`.trim();
+
+        const pyResult = await runPython(
+          ctx.sessionId,
+          pythonCode,
+          { onUsage: onSandboxUsage, getSandbox: ctx.getSandbox },
+        );
+        if (pyResult.exitCode !== 0) {
+          return [
+            `Clustering failed: ${pyResult.stderr || pyResult.stdout}`,
+            null,
+          ] as [string, null];
+        }
+        const parsed = JSON.parse(pyResult.stdout) as {
+          chartData: { x: number; y: number; cluster: number }[];
+          nClusters: number;
+          nNoise: number;
+          nPoints: number;
+          method: string;
+          summary: string;
+          error?: string;
+        };
+        if (parsed.error) {
+          return [`Clustering error: ${parsed.error}`, null] as [string, null];
+        }
+
+        // Build a Recharts scatter chart: x = PC1, y = PC2, color by cluster.
+        // Recharts scatter takes a single data array; cluster id is encoded
+        // per-point so the frontend could split series later if needed.
+        const chartData = parsed.chartData.map((pt, i) => ({
+          idx: i,
+          x: pt.x,
+          y: pt.y,
+          cluster: pt.cluster === -1 ? "Noise" : `Cluster ${pt.cluster}`,
+        }));
+
+        const artifact: Artifact = {
+          type: "chart",
+          payload: {
+            chartType: "scatter" as const,
+            data: chartData,
+            xKey: "x",
+            yKeys: ["y"],
+            groupKey: "cluster",
+            title: `Clustering (${parsed.method})`,
+          },
+        };
+        return [parsed.summary, artifact] as [string, Artifact];
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return [`Clustering error: ${msg}`, null] as [string, null];
+      }
+    },
+    {
+      name: "run_cluster",
+      description:
+        "Run KMeans or DBSCAN clustering on query results and visualize with PCA 2D projection. " +
+        "Returns a scatter chart colored by cluster assignment and a summary of cluster counts. " +
+        "The SQL must return numeric feature columns suitable for clustering.",
+      schema: z.object({
+        sql: z.string().describe("Read-only SELECT returning data to cluster."),
+        features: z
+          .array(z.string())
+          .min(2)
+          .describe("Numeric column names to use as clustering features."),
+        method: z.enum(["kmeans", "dbscan"]).describe("Clustering algorithm."),
+        nClusters: z
+          .number()
+          .int()
+          .min(2)
+          .max(10)
+          .optional()
+          .describe("Number of clusters (KMeans only). Default 3."),
+      }),
+      responseFormat: "content_and_artifact" as const,
+    },
+  );
+
+  // ----------------------------------------------------------
+  // Tool 9: build_plotly_chart (Phase 2 §2.3)
+  // Run Python code that builds a Plotly figure and assigns it to
+  // `fig`. The figure JSON is extracted via fig.to_json() and
+  // returned as a chart artifact with renderer="plotly".
+  // ----------------------------------------------------------
+  const buildPlotlyChartTool = tool(
+    async ({ sql, pythonCode, title }) => {
+      const validation = validateSelectSql(sql);
+      if (!validation.ok) {
+        return [
+          `SQL validation failed: ${validation.reason}`,
+          null,
+        ] as [string, null];
+      }
+      try {
+        const results = await runSql(sql);
+        const dataJson = JSON.stringify({
+          columns: results.columns,
+          rows: results.rows,
+        });
+
+        const wrappedCode = `
+import pandas as pd, json, sys
+_parsed = json.loads(${JSON.stringify(dataJson)})
+df = pd.DataFrame(_parsed["rows"], columns=_parsed["columns"])
+
+${pythonCode}
+
+if 'fig' not in dir():
+    print(json.dumps({"error": "Code must assign a plotly figure to variable 'fig'"}))
+    sys.exit(1)
+
+figure_json = fig.to_json()
+print(figure_json)
+`.trim();
+
+        const pyResult = await runPython(
+          ctx.sessionId,
+          wrappedCode,
+          { onUsage: onSandboxUsage, getSandbox: ctx.getSandbox },
+        );
+        if (pyResult.exitCode !== 0) {
+          return [
+            `Plotly chart generation failed: ${pyResult.stderr || pyResult.stdout}`,
+            null,
+          ] as [string, null];
+        }
+
+        let figure: Record<string, unknown>;
+        try {
+          figure = JSON.parse(pyResult.stdout) as Record<string, unknown>;
+        } catch {
+          return [
+            `Plotly figure JSON parse failed. Output was: ${pyResult.stdout.slice(0, 500)}`,
+            null,
+          ] as [string, null];
+        }
+
+        if (figure.error) {
+          return [
+            `Plotly error: ${figure.error}`,
+            null,
+          ] as [string, null];
+        }
+
+        const artifact: Artifact = {
+          type: "chart",
+          payload: {
+            renderer: "plotly" as const,
+            plotlyFigure: figure,
+            // Required Recharts fields (unused but must satisfy ChartPayload type):
+            chartType: "scatter" as const,
+            data: [],
+            xKey: "",
+            yKeys: [],
+            title,
+          } as ChartPayload,
+        };
+        return [
+          `Plotly chart "${title ?? "Chart"}" generated successfully.`,
+          artifact,
+        ] as [string, Artifact];
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return [`Plotly chart error: ${msg}`, null] as [string, null];
+      }
+    },
+    {
+      name: "build_plotly_chart",
+      description:
+        "Generate a complex Plotly chart (3D, geographic, large scatter, etc.) by running Python code in the sandbox. " +
+        "Provide a SQL query to load data as `df`, then Python code that creates a plotly figure and assigns it to variable `fig`. " +
+        "The plotly, plotly.express, and plotly.graph_objects libraries are available. " +
+        "Use this for visualizations that Recharts can't handle: 3D scatter/surface, choropleth maps, sankey, treemap, large datasets.",
+      schema: z.object({
+        sql: z.string().describe("Read-only SELECT to load data as DataFrame `df`."),
+        pythonCode: z
+          .string()
+          .describe(
+            "Python code that creates a plotly figure and assigns it to `fig`. Example: `import plotly.express as px; fig = px.scatter_3d(df, x='col1', y='col2', z='col3')`",
+          ),
+        title: z.string().optional().describe("Optional chart title."),
+      }),
+      responseFormat: "content_and_artifact" as const,
+    },
+  );
+
+  return [
+    listTablesTool,
+    retrieveSchemaTool,
+    executeSqlTool,
+    summarizeDataTool,
+    buildChartTool,
+    runPythonTool,
+    runForecastTool,
+    runClusterTool,
+    buildPlotlyChartTool,
+  ];
 }
 
 /** Dialect label for the system prompt (kept for graph.ts to reuse). */

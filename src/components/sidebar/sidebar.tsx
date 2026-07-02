@@ -47,7 +47,7 @@ export function Sidebar({ sessions, userEmail }: SidebarProps) {
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-border bg-card">
       {/* Brand */}
       <div className="px-4 py-4">
-        <h1 className="font-display text-lg font-semibold tracking-tight">
+        <h1 className="font-brand text-lg font-bold tracking-tight">
           Datellix
         </h1>
       </div>
@@ -112,7 +112,7 @@ export function Sidebar({ sessions, userEmail }: SidebarProps) {
 
       {/* Footer — user + sign out */}
       <div className="border-t border-border px-3 py-3">
-        <p className="mb-2 truncate font-mono text-xs text-muted-foreground">
+        <p className="mb-2 truncate font-sans text-xs text-muted-foreground">
           {userEmail ?? "Signed in"}
         </p>
         <form action={signOut}>

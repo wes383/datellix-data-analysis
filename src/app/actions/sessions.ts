@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { deleteFile } from "@/lib/blob/client";
 import { decryptConfig } from "@/lib/db/crypto";
-import { destroySandboxById } from "@/lib/daytona/client";
 import type { FileConfig } from "@/lib/db/schema";
 
 /** Create a new analysis session */
@@ -55,10 +54,10 @@ export async function deleteSession(sessionId: string) {
   const supabase = await createClient();
   const admin = createAdminClient();
 
-  // 1. Load session to find bound data source and sandbox
+  // 1. Load session to find bound data source
   const { data: session } = await supabase
     .from("sessions")
-    .select("id, user_id, data_source_id, sandbox_id")
+    .select("id, user_id, data_source_id")
     .eq("id", sessionId)
     .single();
 
@@ -149,24 +148,14 @@ export async function deleteSession(sessionId: string) {
     }
   }
 
-  // 2. Destroy Daytona sandbox (best-effort — do NOT block session deletion).
-  //    We read sandbox_id from the DB so this works even after a server
-  //    restart when the in-memory cache has been cleared.
-  const sandboxId = (session as any)?.sandbox_id as string | null | undefined;
-  if (sandboxId) {
-    try {
-      await destroySandboxById(sandboxId);
-    } catch (err) {
-      console.error(
-        `[deleteSession] failed to destroy Daytona sandbox ${sandboxId}:`,
-        err,
-      );
-    }
-  }
-
-  // 3. Delete the session — messages, artifacts, session_history_embeddings
+  // 2. Delete the session — messages, artifacts, session_history_embeddings
   //    cascade-delete via their FK on delete cascade. session_data_sources
   //    rows also cascade-delete via their FK on delete cascade.
+  //
+  //    Note: under the ephemeral sandbox model, runPython creates+deletes
+  //    the sandbox per call, so there is no persistent sandbox to clean up
+  //    here. The sandbox_id column (legacy from the old session-bound
+  //    model) is cleared lazily on next session page load.
   const { error } = await supabase
     .from("sessions")
     .delete()
