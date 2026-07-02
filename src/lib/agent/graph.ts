@@ -1,29 +1,33 @@
-import { StateGraph, END, START } from "@langchain/langgraph";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { Pool } from "pg";
-import { HumanMessage, AIMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
-import { AgentState, type Route, type Artifact } from "@/lib/agent/state";
+import { HumanMessage } from "@langchain/core/messages";
 import { createLLM } from "@/lib/agent/llm";
-import { retrieveSchema } from "@/lib/agent/schema";
-import {
-  nlToSql,
-  summarizeData,
-  buildChartPayload,
-} from "@/lib/agent/tools";
-import type { SqlResults } from "@/lib/agent/state";
+import { retrieveSchema, retrieveSchemaMulti, type SchemaColumn } from "@/lib/agent/schema";
+import { createAgentTools, getDialectLabel, type AgentContext } from "@/lib/agent/tools";
 
 /**
- * LangGraph state graph — Phase 1
+ * ReAct agent graph — Phase 2 refactor
  *
- * Flow:
- *   START → schemaRetriever → router → {nlSql → summarize → makeChart | synthesizer} → synthesizer → END
+ * Replaces the Phase 1 six-node StateGraph (schemaRetriever → router → nlSql →
+ * summarize → makeChart → synthesizer) with a single LLM agent that
+ * autonomously calls tools in a ReAct loop, inspects results, and decides what
+ * to do next. This is the "Claude Code style" workflow the user requested: one
+ * coherent LLM that writes SQL, reads results, requests charts/stats, and
+ * answers — instead of multiple LLM calls stitched together by graph edges.
  *
- * - schemaRetriever: pgvector retrieval of relevant schema
- * - router: LLM classifies question as "query" (needs SQL) or "chat" (general)
- * - nlSql: NL → SQL (single LLM call also decides chart/summary need) → validate → execute
- * - summarize: descriptive stats on query results (Daytona sandbox); skipped if !needsSummary
- * - makeChart: builds Recharts payload from LLM-decided spec (no extra LLM call); skipped if !needsChart
- * - synthesizer: streams natural-language conclusion
+ * What's preserved:
+ *   - PostgresSaver checkpointer (thread_id = sessionId) → conversation memory
+ *   - createLLM() factory → 4 provider abstraction (openai/anthropic/glm/openai-compat)
+ *   - pgvector schema pre-retrieval → injected into the system prompt so the
+ *     LLM can start writing SQL immediately, with retrieve_schema available
+ *     as a tool to fetch more columns on demand.
+ *
+ * What's removed:
+ *   - router node (LLM decides itself whether to query data or just answer)
+ *   - nlSql node + generateSql + nlToSql (LLM writes & executes SQL itself)
+ *   - summarize / makeChart nodes (LLM calls summarize_data / build_chart tools)
+ *   - synthesizer node (the agent's final text response IS the answer)
  */
 
 // ============================================================
@@ -35,6 +39,8 @@ let checkpointer: PostgresSaver | null = null;
 
 function createPool(): Pool {
   const connString = process.env.DATABASE_URL!;
+  // Supabase Pooler (port 6543) runs in transaction mode and requires
+  // prepared statements to be disabled; the direct URL (5432) does not.
   const isTransactionMode = /:6543\//.test(connString);
 
   const p = new Pool({
@@ -60,317 +66,161 @@ async function getCheckpointer(): Promise<PostgresSaver> {
 }
 
 // ============================================================
-// Node 1: schemaRetriever
+// System prompt builder
 // ============================================================
-
-async function schemaRetrieverNode(state: typeof AgentState.State) {
-  // Skip if no data source is bound
-  if (!state.dataSourceId) {
-    return { schemaContext: [] };
-  }
-
-  try {
-    const schema = await retrieveSchema(state.dataSourceId, state.question);
-    return { schemaContext: schema };
-  } catch (err) {
-    console.error("[schemaRetriever] error:", err);
-    return { schemaContext: [] };
-  }
-}
-
-// ============================================================
-// Node 2: router (LLM classifies the question)
-// ============================================================
-
-async function routerNode(state: typeof AgentState.State) {
-  // If no data source, go straight to synthesis (general chat)
-  if (!state.dataSourceId || state.schemaContext.length === 0) {
-    return { route: "synthesize" as Route };
-  }
-
-  const llm = createLLM();
-
-  const schemaDesc = state.schemaContext
-    .slice(0, 15)
-    .map((c) => `${c.table_name}.${c.column_name} (${c.data_type})`)
-    .join(", ");
-
-  const systemPrompt = `You are a routing agent for a data analysis system. Classify the user's question into one of these routes:
-
-- "query": The question requires querying data (SQL) to answer. Examples: "show me sales by month", "what's the average order value", "list top 10 customers".
-- "synthesize": The question is general and doesn't need data retrieval. Examples: "what data do I have?", "explain how this works", "hello".
-
-Available data schema: ${schemaDesc}
-
-Respond with ONLY the route name, nothing else.`;
-
-  const response = await llm.invoke([
-    new SystemMessage(systemPrompt),
-    new HumanMessage(state.question),
-  ]);
-
-  const raw = (response.content as string).trim().toLowerCase();
-  // Map LLM output to Route type values ("query" → "nlSql")
-  const route: Route = raw === "synthesize" ? "synthesize" : "nlSql";
-
-  return { route };
-}
-
-// ============================================================
-// Node 3: nlSql (NL → SQL → validate → execute)
-// ============================================================
-
-async function nlSqlNode(state: typeof AgentState.State) {
-  try {
-    const {
-      sql,
-      results,
-      schema,
-      needsSummary,
-      needsChart,
-      chartSpec,
-    } = await nlToSql({
-      sessionId: state.sessionId,
-      dataSourceId: state.dataSourceId,
-      question: state.question,
-    });
-
-    const sqlResults: SqlResults = results;
-
-    // Create a table artifact from the results. Pass all rows (already
-    // capped at MAX_ROWS upstream) — the frontend renders them inside a
-    // fixed-height scroll container so the chat layout isn't stretched.
-    const tableArtifact: Artifact = {
-      type: "table",
-      payload: {
-        columns: sqlResults.columns,
-        rows: sqlResults.rows,
-        truncated: sqlResults.truncated,
-        title: `Query Results`,
-      },
-    };
-
-    return {
-      sqlResults,
-      schemaContext: schema,
-      needsSummary,
-      needsChart,
-      chartSpec,
-      artifacts: [tableArtifact],
-      messages: [
-        new ToolMessage({
-          content: `SQL executed successfully. ${sqlResults.rowCount} rows returned.\nSQL: ${sql}`,
-          tool_call_id: "nlsql",
-        }),
-      ],
-    };
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : "SQL execution failed";
-    return {
-      sqlResults: undefined,
-      needsSummary: false,
-      needsChart: false,
-      chartSpec: null,
-      messages: [
-        new ToolMessage({
-          content: `SQL execution failed: ${errorMsg}`,
-          tool_call_id: "nlsql",
-        }),
-      ],
-    };
-  }
-}
-
-// ============================================================
-// Node 4: summarize (descriptive stats on query results)
-// ============================================================
-
-async function summarizeNode(state: typeof AgentState.State) {
-  // Skip if the LLM decided summary stats aren't useful for this query,
-  // or if there are no SQL results (e.g., query failed).
-  if (!state.sqlResults || !state.needsSummary) {
-    return {};
-  }
-
-  try {
-    const summary = await summarizeData(state.sessionId, state.sqlResults);
-
-    const summaryArtifact: Artifact = {
-      type: "summary",
-      payload: summary,
-    };
-
-    return {
-      artifacts: [summaryArtifact],
-    };
-  } catch (err) {
-    console.error("[summarize] error:", err);
-    return {};
-  }
-}
-
-// ============================================================
-// Node 5: makeChart (builds chart from LLM-decided spec, no extra LLM call)
-// ============================================================
-
-async function makeChartNode(state: typeof AgentState.State) {
-  // Skip if the LLM decided a chart isn't useful, or there's no spec /
-  // results. The chart spec was decided in the same LLM call that
-  // generated the SQL, so this node just builds the payload.
-  if (!state.sqlResults || !state.needsChart || !state.chartSpec) {
-    return {};
-  }
-
-  try {
-    const chartPayload = buildChartPayload(state.chartSpec, state.sqlResults);
-
-    if (!chartPayload) {
-      return {};
-    }
-
-    const chartArtifact: Artifact = {
-      type: "chart",
-      payload: chartPayload,
-    };
-
-    return {
-      artifacts: [chartArtifact],
-    };
-  } catch (err) {
-    console.error("[makeChart] error:", err);
-    return {};
-  }
-}
-
-// ============================================================
-// Node 6: synthesizer (stream natural-language conclusion)
-// ============================================================
-
-async function synthesizerNode(state: typeof AgentState.State) {
-  const llm = createLLM();
-
-  // Build context from artifacts and SQL results
-  let contextParts: string[] = [];
-
-  if (state.sqlResults) {
-    contextParts.push(
-      `SQL query executed, returned ${state.sqlResults.rowCount} rows.`,
-      `Columns: ${state.sqlResults.columns.join(", ")}`,
-      `Sample rows (first 5):`,
-      ...state.sqlResults.rows.slice(0, 5).map((row, idx) =>
-        `Row ${idx + 1}: ${row.join(" | ")}`,
-      ),
-    );
-  }
-
-  for (const artifact of state.artifacts ?? []) {
-    if (artifact.type === "summary") {
-      const payload = artifact.payload as { text: string };
-      contextParts.push(`Data summary: ${payload.text}`);
-    } else if (artifact.type === "chart") {
-      const payload = artifact.payload as { title?: string; chartType: string };
-      contextParts.push(`Chart generated: ${payload.title ?? payload.chartType}`);
-    }
-  }
-
-  const schemaDesc = state.schemaContext.length > 0
-    ? state.schemaContext
-        .slice(0, 10)
-        .map((c) => `${c.table_name}.${c.column_name} (${c.data_type})`)
-        .join(", ")
-    : "No data source connected";
-
-  const systemPrompt = `You are Datellix, an AI data analysis assistant. Answer the user's question based on the available context.
-
-If SQL results are available, reference them in your answer. Be concise and clear.
-If there's an error, explain what went wrong and suggest how to fix it.
-If no data source is connected, let the user know they should upload a file or connect a database.
-
-Available schema: ${schemaDesc}
-
-${contextParts.length > 0 ? "Context:\n" + contextParts.join("\n") : "No additional context available."}
-
-Answer the user's question in a helpful, concise way.`;
-
-  const response = await llm.invoke([
-    new SystemMessage(systemPrompt),
-    new HumanMessage(state.question),
-  ]);
-
-  return {
-    messages: [new AIMessage(response.content as string)],
-  };
-}
-
-// ============================================================
-// Conditional routing
-// ============================================================
-
-function routeAfterRouter(state: typeof AgentState.State): "nlSql" | "synthesizer" {
-  if (state.route === "nlSql") {
-    return "nlSql";
-  }
-  return "synthesizer";
-}
-
-// ============================================================
-// Graph compilation
-// ============================================================
-
-export async function getGraph() {
-  const cp = await getCheckpointer();
-
-  const graph = new StateGraph(AgentState)
-    .addNode("schemaRetriever", schemaRetrieverNode)
-    .addNode("router", routerNode)
-    .addNode("nlSql", nlSqlNode)
-    .addNode("summarize", summarizeNode)
-    .addNode("makeChart", makeChartNode)
-    .addNode("synthesizer", synthesizerNode)
-    .addEdge(START, "schemaRetriever")
-    .addEdge("schemaRetriever", "router")
-    .addConditionalEdges("router", routeAfterRouter, {
-      nlSql: "nlSql",
-      synthesizer: "synthesizer",
-    })
-    .addEdge("nlSql", "summarize")
-    .addEdge("summarize", "makeChart")
-    .addEdge("makeChart", "synthesizer")
-    .addEdge("synthesizer", END)
-    .compile({ checkpointer: cp });
-
-  return graph;
-}
 
 /**
- * Run the Agent and return a streaming event iterator
+ * Build the system prompt for the ReAct agent. Pre-retrieved schema context
+ * (top-K columns from pgvector) is injected so the LLM can start writing SQL
+ * without an immediate retrieve_schema call; the tool remains available for
+ * deeper exploration when the injected slice is insufficient.
+ */
+function buildSystemPrompt(params: {
+  schemaContext: SchemaColumn[];
+  ctx: AgentContext;
+  hasDataSource: boolean;
+}): string {
+  const { schemaContext, ctx, hasDataSource } = params;
+  const dialectLabel = getDialectLabel(ctx.dataSourceType);
+
+  const schemaBlock =
+    schemaContext.length > 0
+      ? formatSchemaForPrompt(schemaContext)
+      : hasDataSource
+        ? "(schema not yet retrieved — call list_tables or retrieve_schema to learn the available tables and columns)"
+        : "(no data source is connected)";
+
+  return `You are Datellix, an AI data analysis assistant. You answer the user's questions by querying the connected data source and reasoning about the results.
+
+You have access to tools. Use them autonomously and as many times as needed to fully answer the question. Think step by step:
+
+1. If a data source is connected, you already have a slice of relevant schema below. If it's not enough, call \`list_tables\` to see all tables or \`retrieve_schema\` with a topic to fetch more columns.
+2. Write a read-only SELECT query in ${dialectLabel} dialect and call \`execute_sql\` to run it. Inspect the returned rows.
+3. If the query fails, read the error, fix the SQL (table/column names, dialect syntax), and retry. You may call \`retrieve_schema\` or \`list_tables\` again to confirm names.
+4. When the user asks for a visualization, call \`build_chart\` with an appropriate chartType and valid xKey/yKeys from the result columns.
+5. When the user asks about distributions, trends, or statistics, call \`summarize_data\` on the relevant query.
+6. After gathering what you need, write a clear, concise natural-language answer that references the data you found. Do not just dump raw rows — interpret them.
+
+Rules:
+- Only run SELECT / WITH...SELECT queries. Never INSERT/UPDATE/DELETE/DDL.
+- Reference real table and column names exactly as they appear in the schema.
+- Table names from file data sources are sanitized (spaces and punctuation become underscores, e.g. "My Films.csv" → "My_Films"). Such names often contain hyphens or other special characters, so ALWAYS wrap table names in double quotes (e.g. FROM "My_Films") to avoid parser errors. Column names with spaces or special characters must also be quoted.
+- Be efficient: don't re-run identical queries; reuse prior results.
+- If no data source is connected, tell the user to upload a file or connect a database.
+- Respond in the same language as the user's question.
+
+Pre-retrieved schema context (top ${schemaContext.length} relevant columns):
+${schemaBlock}`;
+}
+
+/** Compact schema rendering for the system prompt. */
+function formatSchemaForPrompt(schema: SchemaColumn[]): string {
+  const tablesMap = new Map<string, SchemaColumn[]>();
+  for (const col of schema) {
+    const list = tablesMap.get(col.table_name) ?? [];
+    list.push(col);
+    tablesMap.set(col.table_name, list);
+  }
+  return [...tablesMap.entries()]
+    .map(([table, cols]) => {
+      const colLines = cols
+        .map(
+          (c) =>
+            `  ${c.column_name} (${c.data_type})` +
+            (c.sample_values.length > 0
+              ? ` -- e.g. ${c.sample_values.join(", ")}`
+              : ""),
+        )
+        .join("\n");
+      return `${table}\n${colLines}`;
+    })
+    .join("\n\n");
+}
+
+// ============================================================
+// Streaming entry point
+// ============================================================
+
+/**
+ * Run the ReAct agent and yield raw LangGraph stream chunks for the route
+ * handler to translate into SSE events.
  *
- * @param sessionId    LangGraph thread_id (session-level persistence)
- * @param question     user question
- * @param dataSourceId data source bound to the session (empty string if none)
- * @param dataSourceType  "file" | "pg" | "" 
+ * The agent is constructed per request because the tools close over the
+ * session's data-source context (decrypted configs, staged files). The
+ * expensive part — the PostgresSaver checkpointer and its connection pool —
+ * is memoized and shared across requests.
+ *
+ * @param params.sessionId         LangGraph thread_id (session-level memory)
+ * @param params.question          user question
+ * @param params.dataSourceId      single-DB mode: bound DB data source id
+ * @param params.dataSourceType    file | pg | mysql | bigquery | duckdb | sqlite | ""
+ * @param params.fileDataSourceIds multi-file mode: bound file data source ids
  */
 export async function* streamAgent(params: {
   sessionId: string;
   question: string;
   dataSourceId: string;
   dataSourceType: string;
+  fileDataSourceIds: string[];
 }) {
-  const { sessionId, question, dataSourceId, dataSourceType } = params;
-  const graph = await getGraph();
+  const { sessionId, question, dataSourceId, dataSourceType, fileDataSourceIds } = params;
 
-  const stream = await graph.stream(
-    {
-      sessionId,
-      question,
-      dataSourceId,
-      dataSourceType,
-      messages: [new HumanMessage(question)],
-      iterations: 0,
-    },
+  const ctx: AgentContext = {
+    sessionId,
+    dataSourceId,
+    dataSourceType,
+    fileDataSourceIds,
+  };
+  const hasDataSource = !!dataSourceId || fileDataSourceIds.length > 0;
+
+  // 1. Pre-retrieve a small slice of schema (top 5) to seed the system prompt.
+  //    This lets the LLM start writing SQL immediately while still leaving
+  //    retrieve_schema available for deeper exploration.
+  let seedSchema: SchemaColumn[] = [];
+  if (hasDataSource) {
+    try {
+      seedSchema =
+        fileDataSourceIds.length > 0
+          ? await retrieveSchemaMulti(fileDataSourceIds, question, 5)
+          : await retrieveSchema(dataSourceId, question, 5);
+    } catch (err) {
+      // Non-fatal: the agent can still call retrieve_schema itself.
+      console.error("[streamAgent] seed schema retrieval failed:", err);
+    }
+  }
+
+  // 2. Build tools bound to this session's data source context. This also
+  //    stages files in the Daytona sandbox and decrypts DB configs.
+  const tools = await createAgentTools(ctx);
+
+  // 3. Build the agent. checkpointer is shared/memoized; tools & prompt are
+  //    per-request. recursionLimit caps the ReAct loop (default 25 is plenty
+  //    for query → fix → chart flows).
+  const cp = await getCheckpointer();
+  const llm = createLLM();
+  const systemPrompt = buildSystemPrompt({
+    schemaContext: seedSchema,
+    ctx,
+    hasDataSource,
+  });
+
+  const agent = createReactAgent({
+    llm,
+    tools,
+    prompt: systemPrompt,
+    checkpointer: cp,
+  });
+
+  // 4. Stream. We only need "messages" mode: it yields AIMessageChunk tokens
+  //    (text content, reasoning_content, and tool_call deltas) and the final
+  //    ToolMessage for each tool execution — everything the route handler
+  //    needs to render thinking, tool calls, tool results, and the answer.
+  const stream = await agent.stream(
+    { messages: [new HumanMessage(question)] },
     {
       configurable: { thread_id: sessionId },
-      streamMode: ["messages", "updates"],
+      streamMode: ["messages"],
+      recursionLimit: 30,
     },
   );
 

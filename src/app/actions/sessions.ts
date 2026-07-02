@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { deleteFile } from "@/lib/blob/client";
 import { decryptConfig } from "@/lib/db/crypto";
+import { destroySandboxById } from "@/lib/daytona/client";
 import type { FileConfig } from "@/lib/db/schema";
 
 /** Create a new analysis session */
@@ -34,9 +35,15 @@ export async function createSession(dataSourceId?: string) {
  * Delete a session and clean up all associated resources.
  *
  * Cleanup order:
- * 1. If the session's data source is not referenced by any other session,
- *    delete the Blob file (file-type sources) and the data_sources row
+ * 1. If the session is in single-DB mode (sessions.data_source_id set) and
+ *    the data source is not referenced by any other session, delete the
+ *    Blob file (file-type sources) and the data_sources row
  *    (schema_embeddings cascade-deletes via FK).
+ * 1b. If the session is in multi-file mode (rows in session_data_sources),
+ *    for each file data source: if no other session references it, delete
+ *    the Blob file (via meta.blobPath) and the data_sources row. The
+ *    session_data_sources join rows themselves cascade-delete with the
+ *    session (FK on delete cascade).
  * 2. Delete the session row — messages, artifacts, and
  *    session_history_embeddings cascade-delete via FK.
  *
@@ -48,10 +55,10 @@ export async function deleteSession(sessionId: string) {
   const supabase = await createClient();
   const admin = createAdminClient();
 
-  // 1. Load session to find bound data source
+  // 1. Load session to find bound data source and sandbox
   const { data: session } = await supabase
     .from("sessions")
-    .select("id, user_id, data_source_id")
+    .select("id, user_id, data_source_id, sandbox_id")
     .eq("id", sessionId)
     .single();
 
@@ -92,8 +99,74 @@ export async function deleteSession(sessionId: string) {
     }
   }
 
-  // 2. Delete the session — messages, artifacts, session_history_embeddings
-  //    cascade-delete via their FK on delete cascade.
+  // 1b. Multi-file mode: clean up each file data source bound via
+  //     session_data_sources. The join rows themselves cascade-delete with
+  //     the session, but the underlying Blob files and data_sources rows do
+  //     not — so we delete them here when no other session shares the file.
+  const { data: fileLinks } = await admin
+    .from("session_data_sources")
+    .select("data_source_id")
+    .eq("session_id", sessionId);
+
+  if (fileLinks && fileLinks.length > 0) {
+    for (const link of fileLinks) {
+      const fileDsId = link.data_source_id as string;
+
+      // Check if any other session references this file data source.
+      const { count } = await admin
+        .from("session_data_sources")
+        .select("id", { count: "exact", head: true })
+        .eq("data_source_id", fileDsId)
+        .neq("session_id", sessionId);
+
+      if (count === 0) {
+        // No other session references it — delete the Blob file
+        // (best-effort) and the data_sources row. schema_embeddings
+        // cascade-deletes.
+        const { data: ds } = await admin
+          .from("data_sources")
+          .select("type, meta")
+          .eq("id", fileDsId)
+          .single();
+
+        if (ds) {
+          const meta = (ds.meta ?? {}) as Record<string, unknown>;
+          const blobPath =
+            typeof meta.blobPath === "string" ? meta.blobPath : null;
+          if (blobPath) {
+            try {
+              await deleteFile(blobPath);
+            } catch (err) {
+              console.error(
+                `[deleteSession] failed to delete Blob file for data source ${fileDsId}:`,
+                err,
+              );
+            }
+          }
+          await admin.from("data_sources").delete().eq("id", fileDsId);
+        }
+      }
+    }
+  }
+
+  // 2. Destroy Daytona sandbox (best-effort — do NOT block session deletion).
+  //    We read sandbox_id from the DB so this works even after a server
+  //    restart when the in-memory cache has been cleared.
+  const sandboxId = (session as any)?.sandbox_id as string | null | undefined;
+  if (sandboxId) {
+    try {
+      await destroySandboxById(sandboxId);
+    } catch (err) {
+      console.error(
+        `[deleteSession] failed to destroy Daytona sandbox ${sandboxId}:`,
+        err,
+      );
+    }
+  }
+
+  // 3. Delete the session — messages, artifacts, session_history_embeddings
+  //    cascade-delete via their FK on delete cascade. session_data_sources
+  //    rows also cascade-delete via their FK on delete cascade.
   const { error } = await supabase
     .from("sessions")
     .delete()

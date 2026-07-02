@@ -38,3 +38,12 @@ yarn-error.log*
 /daytona-image/.daytona
 
 /docs
+
+# ide
+.claude/
+.cursor/
+.windsurf/
+.idea/
+.vscode/
+.trae/
+.continue/

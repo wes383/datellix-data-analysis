@@ -1,7 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Plus, Trash2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ interface SidebarProps {
 export function Sidebar({ sessions, userEmail }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
 
   function handleNew() {
@@ -29,9 +30,15 @@ export function Sidebar({ sessions, userEmail }: SidebarProps) {
     e.stopPropagation();
     startTransition(async () => {
       await deleteSession(sessionId);
-      // If we're viewing the deleted session, jump to a fresh pending
-      // session instead of the blank home placeholder.
-      if (pathname === `/chat/${sessionId}`) router.push("/chat/new");
+      // If we're viewing the deleted session, or on a page referencing it,
+      // jump to a fresh pending session instead of the blank home placeholder.
+      const currentQuerySessionId = searchParams.get("sessionId");
+      if (
+        pathname === `/chat/${sessionId}` ||
+        (pathname === "/sources/new" && currentQuerySessionId === sessionId)
+      ) {
+        router.push("/chat/new");
+      }
       router.refresh();
     });
   }

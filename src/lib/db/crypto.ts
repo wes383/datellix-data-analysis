@@ -1,5 +1,13 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { PgConfig, FileConfig, ApiConfig } from "@/lib/db/schema";
+import type {
+  PgConfig,
+  FileConfig,
+  ApiConfig,
+  MysqlConfig,
+  BigQueryConfig,
+  DuckdbFileConfig,
+  SqliteFileConfig,
+} from "@/lib/db/schema";
 
 /**
  * Data source credential encryption/decryption
@@ -16,7 +24,16 @@ import type { PgConfig, FileConfig, ApiConfig } from "@/lib/db/schema";
  * Encrypt a config object and return the ciphertext string.
  * The ciphertext is stored in data_sources.config_encrypted.
  */
-export async function encryptConfig(config: PgConfig | FileConfig | ApiConfig): Promise<string> {
+export async function encryptConfig(
+  config:
+    | PgConfig
+    | FileConfig
+    | ApiConfig
+    | MysqlConfig
+    | BigQueryConfig
+    | DuckdbFileConfig
+    | SqliteFileConfig,
+): Promise<string> {
   const admin = createAdminClient();
   const { data, error } = await admin.rpc("encrypt_config", {
     p_plaintext: config as unknown as Record<string, unknown>,
@@ -31,7 +48,16 @@ export async function encryptConfig(config: PgConfig | FileConfig | ApiConfig): 
  * Decrypt a ciphertext string and return the config object.
  * Only call this server-side, immediately before use; never log or persist the result.
  */
-export async function decryptConfig<T = PgConfig | FileConfig | ApiConfig>(
+export async function decryptConfig<
+  T =
+    | PgConfig
+    | FileConfig
+    | ApiConfig
+    | MysqlConfig
+    | BigQueryConfig
+    | DuckdbFileConfig
+    | SqliteFileConfig,
+>(
   ciphertext: string,
 ): Promise<T> {
   const admin = createAdminClient();

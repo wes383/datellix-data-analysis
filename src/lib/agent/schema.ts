@@ -1,9 +1,19 @@
 import { Pool } from "pg";
+import mysql from "mysql2/promise";
+import { BigQuery } from "@google-cloud/bigquery";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptConfig } from "@/lib/db/crypto";
 import { embedBatch, embedText } from "@/lib/llm/embeddings";
-import { runPython, uploadFileToSandbox, SANDBOX_DATA_DIR } from "@/lib/daytona/client";
-import type { PgConfig, FileConfig, DataSourceType } from "@/lib/db/schema";
+import { runPython, uploadFileToSandbox, SANDBOX_DATA_DIR, destroySandboxById, killSandbox } from "@/lib/daytona/client";
+import type {
+  PgConfig,
+  FileConfig,
+  MysqlConfig,
+  BigQueryConfig,
+  DuckdbFileConfig,
+  SqliteFileConfig,
+  DataSourceType,
+} from "@/lib/db/schema";
 
 /**
  * Schema indexer
@@ -25,38 +35,72 @@ export interface SchemaColumn {
 
 /** Python code to extract schema from a file using DuckDB in the sandbox */
 function buildSchemaExtractionCode(remotePath: string, format: string): string {
-  // DuckDB read function per format
-  const readFunc =
-    format === "csv"
-      ? `read_csv_auto('${remotePath}', header=true)`
-      : format === "parquet"
-        ? `read_parquet('${remotePath}')`
-        : format === "excel"
-          ? `read_xlsx('${remotePath}')` // duckdb-xlsx extension may be needed; fall back to pandas
-          : `read_csv_auto('${remotePath}', header=true)`;
-
   return `
-import duckdb, json, sys
-con = duckdb.connect()
+import pandas as pd
+import duckdb
+import json
+import sys
+
+def load_and_clean_file(file_path, file_format):
+    if file_format == "csv":
+        df_raw = pd.read_csv(file_path, header=None, dtype=str)
+    elif file_format == "excel":
+        df_raw = pd.read_excel(file_path, header=None)
+    elif file_format == "parquet":
+        return pd.read_parquet(file_path)
+    else:
+        df_raw = pd.read_csv(file_path, header=None, dtype=str)
+
+    # Automatically find the header row (first 10 rows search)
+    best_idx = 0
+    best_score = -1
+    for idx, row in df_raw.head(10).iterrows():
+        non_null_count = row.notna().sum()
+        string_count = sum(1 for v in row if isinstance(v, str) and len(v.strip()) > 0)
+        # Score prioritizing non-empty cells and string-like headers
+        score = non_null_count * 2 + string_count
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+
+    # Slice data starting after the header row
+    df = df_raw.iloc[best_idx + 1:].copy()
+    headers = df_raw.iloc[best_idx].tolist()
+    
+    # Process column names: trim spaces, replace NaN, deduplicate
+    col_names = []
+    seen = {}
+    for i, col in enumerate(headers):
+        name = str(col).strip() if pd.notna(col) else f"Unnamed_{i}"
+        if name == "":
+            name = f"Unnamed_{i}"
+        if name in seen:
+            seen[name] += 1
+            name = f"{name}_{seen[name]}"
+        else:
+            seen[name] = 1
+        col_names.append(name)
+        
+    df.columns = col_names
+    df = df.reset_index(drop=True)
+    
+    # Type inference: convert numeric columns where possible
+    for col in df.columns:
+        try:
+            df[col] = pd.to_numeric(df[col])
+        except Exception:
+            pass
+            
+    return df
 
 try:
-    # Get column info
-    cols = con.execute("DESCRIBE SELECT * FROM ${readFunc} LIMIT 100").fetchall()
-    # Get sample rows (up to 5)
-    samples = con.execute("SELECT * FROM ${readFunc} LIMIT 5").fetchall()
+    df = load_and_clean_file(${JSON.stringify(remotePath)}, ${JSON.stringify(format)})
+    con = duckdb.connect()
+    cols = con.execute("DESCRIBE SELECT * FROM df").fetchall()
+    samples = con.execute("SELECT * FROM df LIMIT 5").fetchall()
 except Exception as e:
-    # Fallback: try pandas for excel
-    try:
-        import pandas as pd
-        if "${format}" == "excel":
-            df = pd.read_excel("${remotePath}", nrows=100)
-        else:
-            df = pd.read_parquet("${remotePath}") if "${format}" == "parquet" else pd.read_csv("${remotePath}", nrows=100)
-        cols = [(c, str(df[c].dtype)) for c in df.columns]
-        samples = [tuple(df.iloc[i]) for i in range(min(5, len(df)))]
-    except Exception as e2:
-        print(json.dumps({"error": str(e) + " | fallback: " + str(e2)}))
-        sys.exit(1)
+    print(json.dumps({"error": str(e)}))
+    sys.exit(1)
 
 # Build result: list of {column_name, data_type, sample_values}
 column_names = [c[0] for c in cols]
@@ -82,6 +126,7 @@ async function extractFileSchema(
   blobUrl: string,
   filename: string,
   format: string,
+  persistSandboxId?: (sandboxId: string) => Promise<void>,
 ): Promise<SchemaColumn[]> {
   // Download file from Vercel Blob (private blobs require Authorization header)
   const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
@@ -98,11 +143,11 @@ async function extractFileSchema(
   // Upload to sandbox
   const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
   const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
-  await uploadFileToSandbox(sessionId, fileBuffer, remotePath);
+  await uploadFileToSandbox(sessionId, fileBuffer, remotePath, persistSandboxId);
 
   // Run DuckDB schema extraction
   const code = buildSchemaExtractionCode(remotePath, format);
-  const result = await runPython(sessionId, code);
+  const result = await runPython(sessionId, code, persistSandboxId);
 
   if (result.exitCode !== 0) {
     throw new Error(`Schema extraction failed: ${result.stderr || result.stdout}`);
@@ -119,8 +164,13 @@ async function extractFileSchema(
     return [];
   }
 
-  // Use filename (without extension) as table_name
-  const tableName = filename.replace(/\.[^.]+$/, "");
+  // Use the same sanitized stem that executeMultiFileSql registers as the
+  // DuckDB view name (filename → replace special chars → strip extension).
+  // This must stay in sync with the view name logic in tools.ts so the LLM
+  // always references the exact table name DuckDB knows about.
+  const tableName = filename
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/\.[^.]+$/, "");
 
   return parsed.columns.map((c) => ({
     table_name: tableName,
@@ -192,6 +242,182 @@ async function extractPgSchema(config: PgConfig): Promise<SchemaColumn[]> {
   }
 }
 
+/** Extract schema from a MySQL data source */
+async function extractMysqlSchema(config: MysqlConfig): Promise<SchemaColumn[]> {
+  if (!config.database) {
+    throw new Error("Database name must be specified in MySQL connection config");
+  }
+  const conn = await mysql.createConnection({
+    host: config.host,
+    port: config.port,
+    user: config.user,
+    password: config.password,
+    database: config.database,
+    ssl: config.ssl === "disable" ? undefined : { rejectUnauthorized: false },
+  });
+  try {
+    const [tablesRaw] = await conn.execute(
+      `SELECT TABLE_NAME AS table_name FROM information_schema.tables WHERE TABLE_SCHEMA = ?`,
+      [config.database],
+    );
+    const tables = (tablesRaw as any[]).map((row) => ({
+      table_name: row.table_name ?? row.TABLE_NAME,
+    }));
+    const result: SchemaColumn[] = [];
+    for (const t of tables) {
+      if (!t.table_name) continue;
+      const [colsRaw] = await conn.execute(
+        `SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type 
+         FROM information_schema.columns
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? 
+         ORDER BY ORDINAL_POSITION`,
+        [config.database, t.table_name],
+      );
+      const cols = (colsRaw as any[]).map((row) => ({
+        column_name: row.column_name ?? row.COLUMN_NAME,
+        data_type: row.data_type ?? row.DATA_TYPE,
+      }));
+      for (const c of cols) {
+        if (!c.column_name) continue;
+        result.push({
+          table_name: t.table_name,
+          column_name: c.column_name,
+          data_type: c.data_type || "unknown",
+          description: `Column "${c.column_name}" in table "${t.table_name}", type ${c.data_type || "unknown"}`,
+          sample_values: [],
+        });
+      }
+    }
+    return result;
+  } finally {
+    await conn.end();
+  }
+}
+
+/** Extract schema from a BigQuery data source */
+async function extractBigQuerySchema(config: BigQueryConfig): Promise<SchemaColumn[]> {
+  let credentials: Record<string, unknown>;
+  try {
+    credentials = JSON.parse(config.credentialsJson);
+  } catch {
+    throw new Error("BigQuery credentials JSON is invalid");
+  }
+  const bq = new BigQuery({
+    projectId: config.projectId,
+    credentials,
+    location: config.location || "US",
+  });
+  const result: SchemaColumn[] = [];
+  const datasets: string[] = config.dataset
+    ? [config.dataset]
+    : (await bq.getDatasets())[0]
+        .map((d) => d.id)
+        .filter((id): id is string => typeof id === "string");
+  for (const datasetId of datasets) {
+    const [tables] = await bq.dataset(datasetId).getTables();
+    for (const table of tables) {
+      const [meta] = await table.getMetadata();
+      const metaAny = meta as unknown as {
+        schema?: { fields?: { name: string; type: string }[] };
+      };
+      const fields = metaAny.schema?.fields ?? [];
+      for (const f of fields) {
+        result.push({
+          table_name: `${datasetId}.${table.id}`,
+          column_name: f.name,
+          data_type: f.type,
+          description: `Column "${f.name}" in table "${datasetId}.${table.id}", type ${f.type}`,
+          sample_values: [],
+        });
+      }
+    }
+  }
+  return result;
+}
+
+/** Extract schema from a DuckDB file via sandbox */
+async function extractDuckdbFileSchema(
+  sessionId: string,
+  config: DuckdbFileConfig,
+): Promise<SchemaColumn[]> {
+  const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
+  // Stage the file first (download from Blob, upload to sandbox)
+  const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+  const fileResp = await fetch(config.blobUrl, {
+    headers: blobToken ? { Authorization: `Bearer ${blobToken}` } : undefined,
+  });
+  if (!fileResp.ok) {
+    throw new Error(`Failed to download file from Blob: ${fileResp.status}`);
+  }
+  const fileBuffer = Buffer.from(await fileResp.arrayBuffer());
+  await uploadFileToSandbox(sessionId, fileBuffer, remotePath);
+  const code = `
+import duckdb, json, sys
+con = duckdb.connect("${remotePath}", read_only=True)
+try:
+    tables = con.execute("SHOW TABLES").fetchall()
+    result = []
+    for (tname,) in tables:
+        cols = con.execute(f"DESCRIBE SELECT * FROM \\"{tname}\\" LIMIT 1").fetchall()
+        for c in cols:
+            result.append({"table_name": tname, "column_name": c[0], "data_type": str(c[1]), "description": "", "sample_values": []})
+    print(json.dumps({"columns": result}))
+except Exception as e:
+    print(json.dumps({"error": str(e)}))
+    sys.exit(1)
+`.trim();
+  const pyResult = await runPython(sessionId, code);
+  if (pyResult.exitCode !== 0) {
+    throw new Error(`DuckDB file schema extraction failed: ${pyResult.stderr}`);
+  }
+  const parsed = JSON.parse(pyResult.stdout) as { columns: SchemaColumn[]; error?: string };
+  if (parsed.error) throw new Error(parsed.error);
+  return parsed.columns;
+}
+
+/** Extract schema from a SQLite file via sandbox (DuckDB sqlite extension) */
+async function extractSqliteFileSchema(
+  sessionId: string,
+  config: SqliteFileConfig,
+): Promise<SchemaColumn[]> {
+  const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
+  const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+  const fileResp = await fetch(config.blobUrl, {
+    headers: blobToken ? { Authorization: `Bearer ${blobToken}` } : undefined,
+  });
+  if (!fileResp.ok) {
+    throw new Error(`Failed to download file from Blob: ${fileResp.status}`);
+  }
+  const fileBuffer = Buffer.from(await fileResp.arrayBuffer());
+  await uploadFileToSandbox(sessionId, fileBuffer, remotePath);
+  const code = `
+import duckdb, json, sys
+con = duckdb.connect()
+try:
+    con.execute("INSTALL sqlite; LOAD sqlite;")
+    con.execute("CALL sqlite_attach('${remotePath}', read_only=True)")
+    tables = con.execute("SHOW TABLES").fetchall()
+    result = []
+    for (tname,) in tables:
+        cols = con.execute(f"DESCRIBE SELECT * FROM \\"{tname}\\" LIMIT 1").fetchall()
+        for c in cols:
+            result.append({"table_name": tname, "column_name": c[0], "data_type": str(c[1]), "description": "", "sample_values": []})
+    print(json.dumps({"columns": result}))
+except Exception as e:
+    print(json.dumps({"error": str(e)}))
+    sys.exit(1)
+`.trim();
+  const pyResult = await runPython(sessionId, code);
+  if (pyResult.exitCode !== 0) {
+    throw new Error(`SQLite file schema extraction failed: ${pyResult.stderr}`);
+  }
+  const parsed = JSON.parse(pyResult.stdout) as { columns: SchemaColumn[]; error?: string };
+  if (parsed.error) throw new Error(parsed.error);
+  return parsed.columns;
+}
+
 /**
  * Index a data source's schema into pgvector.
  * Called after creating a file or PG data source.
@@ -210,8 +436,10 @@ export async function indexDataSourceSchema(params: {
   configEncrypted: string;
   sessionId?: string;
   meta?: Record<string, unknown>;
+  /** Optional callback to persist the Daytona sandbox_id when a new sandbox is created */
+  persistSandboxId?: (sandboxId: string) => Promise<void>;
 }): Promise<void> {
-  const { dataSourceId, userId, type, configEncrypted, sessionId, meta } = params;
+  const { dataSourceId, userId, type, configEncrypted, sessionId, meta, persistSandboxId } = params;
 
   // 1. Extract schema based on source type
   let columns: SchemaColumn[] = [];
@@ -226,13 +454,31 @@ export async function indexDataSourceSchema(params: {
       config.blobUrl,
       config.filename,
       config.format,
+      persistSandboxId,
     );
   } else if (type === "pg") {
     const config = await decryptConfig<PgConfig>(configEncrypted);
     columns = await extractPgSchema(config);
+  } else if (type === "mysql") {
+    const config = await decryptConfig<MysqlConfig>(configEncrypted);
+    columns = await extractMysqlSchema(config);
+  } else if (type === "bigquery") {
+    const config = await decryptConfig<BigQueryConfig>(configEncrypted);
+    columns = await extractBigQuerySchema(config);
+  } else if (type === "duckdb") {
+    if (!sessionId) {
+      throw new Error("DuckDB file schema indexing requires a sessionId (for sandbox access)");
+    }
+    const config = await decryptConfig<DuckdbFileConfig>(configEncrypted);
+    columns = await extractDuckdbFileSchema(sessionId, config);
+  } else if (type === "sqlite") {
+    if (!sessionId) {
+      throw new Error("SQLite file schema indexing requires a sessionId (for sandbox access)");
+    }
+    const config = await decryptConfig<SqliteFileConfig>(configEncrypted);
+    columns = await extractSqliteFileSchema(sessionId, config);
   } else {
-    // API sources: no schema to index (handled differently in Phase 3)
-    return;
+    throw new Error(`Schema indexing not supported for type: ${type}`);
   }
 
   if (columns.length === 0) return;
@@ -267,6 +513,23 @@ export async function indexDataSourceSchema(params: {
       throw new Error(`Failed to insert schema embeddings: ${error.message}`);
     }
   }
+
+  // 4. Destroy sandbox after indexing (best-effort).
+  //    File, DuckDB, and SQLite sources use a temporary sandbox only for
+  //    schema extraction. The sandbox is NOT needed between requests:
+  //    ensureFileInSandbox() re-stages the file from Vercel Blob on every
+  //    query, so we can destroy the sandbox now to stop idle containers
+  //    accumulating and consuming the Daytona disk quota.
+  if (sessionId && (type === "file" || type === "duckdb" || type === "sqlite")) {
+    // killSandbox removes it from the in-process cache AND calls sandbox.delete().
+    // This covers the common case where schema indexing and the first query
+    // happen in the same server process.
+    try {
+      await killSandbox(sessionId);
+    } catch (err) {
+      console.error("[schema] failed to destroy sandbox after indexing:", err);
+    }
+  }
 }
 
 /**
@@ -291,6 +554,35 @@ export async function retrieveSchema(
     throw new Error(`Schema retrieval failed: ${error.message}`);
   }
 
+  return (data ?? []).map((row: Record<string, unknown>) => ({
+    table_name: row.table_name as string,
+    column_name: row.column_name as string,
+    data_type: row.data_type as string,
+    description: row.description as string,
+    sample_values: (row.sample_values as unknown[]) ?? [],
+  }));
+}
+
+/**
+ * Retrieve schema columns across multiple data sources (multi-file session).
+ * Calls match_schema_multi with the union of data source ids.
+ */
+export async function retrieveSchemaMulti(
+  dataSourceIds: string[],
+  question: string,
+  topK = 20,
+): Promise<SchemaColumn[]> {
+  if (dataSourceIds.length === 0) return [];
+  const queryVector = await embedText(question);
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("match_schema_multi", {
+    p_query: queryVector,
+    p_sources: dataSourceIds,
+    p_k: topK,
+  });
+  if (error) {
+    throw new Error(`Multi-source schema retrieval failed: ${error.message}`);
+  }
   return (data ?? []).map((row: Record<string, unknown>) => ({
     table_name: row.table_name as string,
     column_name: row.column_name as string,

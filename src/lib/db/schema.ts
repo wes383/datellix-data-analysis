@@ -3,7 +3,7 @@
  * Corresponds to table structure in supabase/migrations
  */
 
-export type DataSourceType = "file" | "pg" | "api";
+export type DataSourceType = "file" | "pg" | "mysql" | "bigquery" | "duckdb" | "sqlite";
 
 export interface DataSource {
   id: string;
@@ -13,6 +13,8 @@ export interface DataSource {
   /** Encrypted config ciphertext (pgcrypto output, TEXT). Decrypted server-side before use. */
   config_encrypted: string;
   meta: Record<string, unknown>;
+  /** For file-type data sources created in multi-file mode: the owning session. */
+  session_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -35,6 +37,41 @@ export interface FileConfig {
   filename: string;
   /** csv | excel | parquet */
   format: string;
+  size: number;
+}
+
+/** MySQL data source config (plaintext, only used after server-side decryption) */
+export interface MysqlConfig {
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  password: string;
+  ssl?: string;
+}
+
+/** BigQuery data source config. `credentialsJson` is the service account JSON key file content. */
+export interface BigQueryConfig {
+  projectId: string;
+  /** Location, e.g. "US", "EU". Defaults to "US" if empty. */
+  location?: string;
+  /** Full contents of the service account JSON key file. */
+  credentialsJson: string;
+  /** Optional default dataset to scope queries (without project prefix). */
+  dataset?: string;
+}
+
+/** DuckDB file data source config. The file is uploaded to Vercel Blob. */
+export interface DuckdbFileConfig {
+  blobUrl: string;
+  filename: string;
+  size: number;
+}
+
+/** SQLite file data source config. The file is uploaded to Vercel Blob. */
+export interface SqliteFileConfig {
+  blobUrl: string;
+  filename: string;
   size: number;
 }
 

@@ -27,17 +27,64 @@ export default async function ChatPage({ params }: PageProps) {
     .eq("session_id", sessionId)
     .order("created_at", { ascending: true });
 
-  // Load bound data source (name + type) for the composer status bar
-  let dataSource: { id: string; type: string; name: string } | null = null;
+  // Resolve session data source mode:
+  //  - Single-DB mode: sessions.data_source_id points to a database data source
+  //  - Multi-file mode: session_data_sources rows point to file data sources
+  //  The two are mutually exclusive (enforced at upload/connect time).
+  // Use the admin client to read data_sources rows regardless of RLS on the
+  // join — ownership is already verified by the session RLS check above.
+  const admin = createAdminClient();
+  let dataSource:
+    | { mode: "database"; data: { id: string; type: string; name: string } }
+    | {
+        mode: "files";
+        files: { id: string; name: string; format: string; size: number }[];
+      }
+    | null = null;
+
   if (session.data_source_id) {
-    const admin = createAdminClient();
+    // Single-DB mode
     const { data: ds } = await admin
       .from("data_sources")
       .select("id, type, name")
       .eq("id", session.data_source_id)
       .single();
     if (ds) {
-      dataSource = { id: ds.id, type: ds.type, name: ds.name };
+      dataSource = {
+        mode: "database",
+        data: { id: ds.id, type: ds.type, name: ds.name },
+      };
+    }
+  } else {
+    // Multi-file mode: fetch all bound file data sources
+    const { data: links } = await admin
+      .from("session_data_sources")
+      .select("data_source_id, data_sources(id, name, meta)")
+      .eq("session_id", sessionId);
+    if (links && links.length > 0) {
+      const files = links
+        .map((link) => {
+          // Without generated DB types, supabase-js types the nested
+          // data_sources select as an array. At runtime it's a single
+          // object for this many-to-one join, so coerce via unknown and
+          // accept either shape.
+          const dsRaw = link.data_sources as unknown;
+          const ds = Array.isArray(dsRaw)
+            ? (dsRaw[0] as { id: string; name: string; meta: Record<string, unknown> | null } | undefined)
+            : (dsRaw as { id: string; name: string; meta: Record<string, unknown> | null } | undefined);
+          if (!ds) return null;
+          const meta = ds.meta ?? {};
+          return {
+            id: ds.id,
+            name: ds.name,
+            format: typeof meta.format === "string" ? meta.format : "file",
+            size: typeof meta.size === "number" ? meta.size : 0,
+          };
+        })
+        .filter((f): f is { id: string; name: string; format: string; size: number } => f !== null);
+      if (files.length > 0) {
+        dataSource = { mode: "files", files };
+      }
     }
   }
 

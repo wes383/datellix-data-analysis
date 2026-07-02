@@ -8,6 +8,11 @@ import { Daytona, type Sandbox } from "@daytona/sdk";
  *
  * Image: datellix-data-analysis built from daytona-image/Dockerfile
  * Pre-installed: duckdb / pandas / scikit-learn / matplotlib / plotly
+ *
+ * Sandbox lifecycle persistence:
+ *  - On creation, the sandbox ID is written to sessions.sandbox_id in the DB.
+ *  - On deletion, the sandbox ID is read from the DB so it survives server
+ *    restarts (the in-memory cache is only a performance optimisation).
  */
 
 let daytonaClient: Daytona | null = null;
@@ -29,11 +34,21 @@ function getClient(): Daytona {
 const sandboxCache = new Map<string, Sandbox>();
 
 /**
- * Get or create session-level sandbox
- * Phase 1: used for file schema extraction and DuckDB queries
- * Phase 2: adds pause/resume/timeout governance
+ * Get or create session-level sandbox.
+ *
+ * Persistence: the sandbox ID is written back to sessions.sandbox_id so that
+ * deleting a session can always destroy the corresponding Daytona sandbox even
+ * after a server restart (when the in-memory cache is empty).
+ *
+ * @param sessionId   The datellix session UUID (LangGraph thread_id).
+ * @param persistFn   Optional callback that receives the new sandboxId to
+ *                    persist it to the database. Only called when a brand-new
+ *                    sandbox is created (not on cache hits).
  */
-export async function getOrCreateSandbox(sessionId: string): Promise<Sandbox> {
+export async function getOrCreateSandbox(
+  sessionId: string,
+  persistFn?: (sandboxId: string) => Promise<void>,
+): Promise<Sandbox> {
   const cached = sandboxCache.get(sessionId);
   if (cached) return cached;
 
@@ -43,10 +58,48 @@ export async function getOrCreateSandbox(sessionId: string): Promise<Sandbox> {
     language: "python",
   });
   sandboxCache.set(sessionId, sandbox);
+
+  // Persist the sandbox ID so we can delete it even after a server restart.
+  if (persistFn) {
+    try {
+      await persistFn(sandbox.id);
+    } catch (err) {
+      // Non-fatal — worst case we leak the sandbox on session delete, but the
+      // in-memory cache will still allow cleanup within the same process.
+      console.error("[daytona] failed to persist sandbox_id:", err);
+    }
+  }
+
   return sandbox;
 }
 
-/** Destroy sandbox (called when session ends) */
+/**
+ * Destroy sandbox by Daytona sandbox ID (retrieved from DB).
+ * This is the primary deletion path used by deleteSession — it works even
+ * after a server restart when the in-memory cache has been cleared.
+ */
+export async function destroySandboxById(sandboxId: string): Promise<void> {
+  const client = getClient();
+  try {
+    const sandbox = await client.get(sandboxId);
+    await sandbox.delete();
+  } catch (err: any) {
+    // 404-style errors just mean the sandbox is already gone — safe to ignore.
+    if (
+      err?.message?.includes("not found") ||
+      err?.status === 404 ||
+      err?.code === 404
+    ) {
+      return;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Destroy sandbox using the in-memory cache (fallback / legacy path).
+ * Called when no sandbox_id is stored in the DB (old sessions).
+ */
 export async function killSandbox(sessionId: string): Promise<void> {
   const sandbox = sandboxCache.get(sessionId);
   if (!sandbox) return;
@@ -64,12 +117,13 @@ export async function killSandbox(sessionId: string): Promise<void> {
 export async function runPython(
   sessionId: string,
   code: string,
+  persistSandboxId?: (sandboxId: string) => Promise<void>,
 ): Promise<{
   stdout: string;
   stderr: string;
   exitCode: number;
 }> {
-  const sandbox = await getOrCreateSandbox(sessionId);
+  const sandbox = await getOrCreateSandbox(sessionId, persistSandboxId);
   const result = await sandbox.process.codeRun(code);
   return {
     stdout: result.result ?? "",
@@ -86,8 +140,9 @@ export async function uploadFileToSandbox(
   sessionId: string,
   fileBuffer: Buffer,
   remotePath: string,
+  persistSandboxId?: (sandboxId: string) => Promise<void>,
 ): Promise<void> {
-  const sandbox = await getOrCreateSandbox(sessionId);
+  const sandbox = await getOrCreateSandbox(sessionId, persistSandboxId);
   await sandbox.fs.uploadFile(fileBuffer, remotePath);
 }
 

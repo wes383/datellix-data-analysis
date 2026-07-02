@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowUp, ChevronRight, Database, Loader2, Upload, Wrench } from "lucide-react";
+import { ArrowUp, ChevronRight, Database, Loader2, Upload, Wrench, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -13,12 +13,26 @@ import {
   ArtifactRenderer,
   type ArtifactView,
 } from "@/components/chat/artifact-renderer";
+import { Markdown } from "@/components/chat/markdown";
+
+/** Discriminated union for the data source bound to a session.
+ *  - database mode: a single DB data source (pg/mysql/bigquery/duckdb/sqlite)
+ *    bound via sessions.data_source_id
+ *  - files mode: one or more file data sources bound via session_data_sources
+ *  The two modes are mutually exclusive (enforced by the backend). */
+type DataSourceProp =
+  | { mode: "database"; data: { id: string; type: string; name: string } }
+  | {
+      mode: "files";
+      files: { id: string; name: string; format: string; size: number }[];
+    }
+  | null;
 
 interface ChatProps {
   sessionId: string;
   initialMessages: Message[];
   initialArtifacts?: Artifact[];
-  dataSource?: { id: string; type: string; name: string } | null;
+  dataSource?: DataSourceProp;
 }
 
 /* DB Artifact shape (payload is Record<string, unknown>).
@@ -32,12 +46,18 @@ interface Artifact {
 }
 
 interface StreamMessage {
+  // AIMessage text token (narration + final answer)
   content?: string;
-  error?: string;
-  artifact?: ArtifactView;
-  tool?: string;
-  node?: string;
+  // AIMessage reasoning_content token (collapsible CoT)
   thinking?: string;
+  // LLM started calling a tool
+  tool_call?: { id: string; name: string };
+  // Tool finished executing
+  tool_result?: { id: string; name: string; content: string };
+  // Artifact produced by a content_and_artifact tool
+  artifact?: ArtifactView;
+  toolCallId?: string;
+  error?: string;
 }
 
 /** Local message row that may carry artifacts produced in the same turn.
@@ -50,9 +70,11 @@ interface ChatMessage extends Message {
 }
 
 /** Ordered streaming item — rendered in arrival order so tool progress,
- *  artifacts, thinking, and text interleave naturally instead of being grouped. */
+ *  artifacts, thinking, and text interleave naturally instead of being grouped.
+ *  Tool items carry `id` (tool_call_id) so a later tool_result event can fill
+ *  in the content, and `completed` to toggle the running spinner. */
 type PendingItem =
-  | { kind: "tool"; tool: string; content: string }
+  | { kind: "tool"; id: string; tool: string; content: string; completed: boolean }
   | { kind: "artifact"; artifact: ArtifactView }
   | { kind: "thinking"; content: string }
   | { kind: "text"; content: string };
@@ -77,7 +99,11 @@ export function Chat({
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [connectingDatabase, setConnectingDatabase] = useState(false);
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
+  // Track which file data source is currently being removed (Task 19) so we
+  // can disable its X button and show a spinner.
+  const [removingFileId, setRemovingFileId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -101,14 +127,13 @@ export function Chat({
 
     // For a pending session ("new"), create the real DB session first.
     let activeSessionId = resolvedSessionId;
+    let isNewSession = false;
     if (!activeSessionId) {
       try {
         const session = await createSession();
         activeSessionId = session.id;
         setResolvedSessionId(session.id);
-        // Replace the URL so the page is bookmarkable / refresh-safe.
-        // Use replace (not push) so back button doesn't return to /chat/new.
-        router.replace(`/chat/${session.id}`);
+        isNewSession = true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed to create session";
         toast.error(msg);
@@ -180,26 +205,59 @@ export function Chat({
           try {
             const data = JSON.parse(payload) as StreamMessage;
             if (data.error) throw new Error(data.error);
+
+            // 1. Tool call announced — create a tool item with empty content
+            //    and completed=false so the UI shows a running spinner.
+            if (data.tool_call) {
+              pushItem({
+                kind: "tool",
+                id: data.tool_call.id,
+                tool: data.tool_call.name,
+                content: "",
+                completed: false,
+              });
+            }
+
+            // 2. Tool result — find the previously-announced tool item by id
+            //    and fill in the content, marking it completed.
+            if (data.tool_result) {
+              const tr = data.tool_result;
+              const existing = items.find(
+                (it): it is Extract<PendingItem, { kind: "tool" }> =>
+                  it.kind === "tool" && it.id === tr.id,
+              );
+              if (existing) {
+                existing.content = tr.content;
+                existing.completed = true;
+              } else {
+                // Tool result without prior announcement — create one.
+                pushItem({
+                  kind: "tool",
+                  id: tr.id,
+                  tool: tr.name,
+                  content: tr.content,
+                  completed: true,
+                });
+              }
+              setPendingItems([...items]);
+            }
+
+            // 3. Reasoning / thinking content (collapsible CoT)
             if (data.thinking) {
               pushItem({ kind: "thinking", content: data.thinking });
             }
-            if (data.tool) {
-              // Tool messages also carry `content`, but we render them as
-              // tool items only — skip the text path to avoid duplicates.
-              pushItem({
-                kind: "tool",
-                tool: data.tool,
-                content: data.content ?? "",
-              });
-            } else if (data.content) {
+
+            // 4. Visible text content (narration + final answer)
+            if (data.content) {
               assistantContent += data.content;
               pushItem({ kind: "text", content: data.content });
             }
+
+            // 5. Artifact from a content_and_artifact tool
             if (data.artifact) {
               const artifact: ArtifactView = {
                 type: data.artifact.type,
                 payload: data.artifact.payload,
-                node: data.node,
               };
               collectedArtifacts.push(artifact);
               pushItem({ kind: "artifact", artifact });
@@ -211,7 +269,7 @@ export function Chat({
         }
       }
 
-      if (assistantContent || collectedArtifacts.length > 0) {
+      if (assistantContent || collectedArtifacts.length > 0 || items.length > 0) {
         const assistantMessage: ChatMessage = {
           id: `temp-${Date.now()}`,
           session_id: sessionId,
@@ -233,6 +291,10 @@ export function Chat({
       setPendingItems([]);
       setStreaming(false);
       inputRef.current?.focus();
+      if (isNewSession && activeSessionId) {
+        router.replace(`/chat/${activeSessionId}`);
+        router.refresh();
+      }
     }
   }
 
@@ -242,12 +304,13 @@ export function Chat({
     // For a pending session ("new"), create the real DB session first —
     // upload needs a session_id to bind the data source.
     let activeSessionId = resolvedSessionId;
+    let isNewSession = false;
     if (!activeSessionId) {
       try {
         const session = await createSession();
         activeSessionId = session.id;
         setResolvedSessionId(session.id);
-        router.replace(`/chat/${session.id}`);
+        isNewSession = true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed to create session";
         toast.error(msg);
@@ -281,6 +344,9 @@ export function Chat({
               data.indexError ? ` · index failed: ${data.indexError}` : ""
             }`,
       });
+      if (isNewSession) {
+        router.replace(`/chat/${activeSessionId}`);
+      }
       // Refresh server component so the DataSourceBar updates
       router.refresh();
     } catch (err) {
@@ -289,6 +355,54 @@ export function Chat({
     } finally {
       setUploading(false);
     }
+  }
+
+  async function handleRemoveFile(fileId: string) {
+    // Remove a file data source from the current session (multi-file mode).
+    // Calls DELETE /api/sources/[id]?sessionId=... then refreshes the
+    // server component so the DataSourceBar re-renders without the file.
+    const activeSessionId = resolvedSessionId || sessionId;
+    if (!activeSessionId) return;
+    if (removingFileId) return; // prevent concurrent removals
+
+    setRemovingFileId(fileId);
+    try {
+      const res = await fetch(
+        `/api/sources/${fileId}?sessionId=${encodeURIComponent(activeSessionId)}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) {
+        const errBody = await res.text();
+        throw new Error(errBody || `Remove failed: ${res.status}`);
+      }
+      toast.success("File removed");
+      router.refresh();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Remove failed";
+      toast.error(msg);
+    } finally {
+      setRemovingFileId(null);
+    }
+  }
+
+  async function handleConnectDatabase() {
+    if (connectingDatabase) return;
+    let activeSessionId = resolvedSessionId;
+    if (!activeSessionId) {
+      setConnectingDatabase(true);
+      try {
+        const session = await createSession();
+        activeSessionId = session.id;
+        setResolvedSessionId(session.id);
+        router.replace(`/chat/${session.id}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Failed to create session";
+        toast.error(msg);
+        setConnectingDatabase(false);
+        return;
+      }
+    }
+    router.push(`/sources/new?sessionId=${activeSessionId}`);
   }
 
   return (
@@ -301,6 +415,10 @@ export function Chat({
         dataSource={dataSource}
         uploading={uploading}
         onUpload={handleFileUpload}
+        onRemoveFile={handleRemoveFile}
+        removingFileId={removingFileId}
+        onConnectDatabase={handleConnectDatabase}
+        connectingDatabase={connectingDatabase}
       />
 
       {/* ============================================================
@@ -314,6 +432,8 @@ export function Chat({
               hasDataSource={!!dataSource}
               uploading={uploading}
               onUpload={handleFileUpload}
+              onConnectDatabase={handleConnectDatabase}
+              connectingDatabase={connectingDatabase}
             />
           )}
 
@@ -385,10 +505,13 @@ export function Chat({
  * Segments are stored on the assistant message's `tool_calls` jsonb column
  * (despite the column name, it holds our segment array — see route.ts).
  * Each segment is one of:
- *   { kind: "tool", tool, content }
- *   { kind: "thinking", content }
+ *   { kind: "tool", id, tool, content }   // id = tool_call_id
  *   { kind: "text", content }
  *   { kind: "artifact", artifactType, artifactIndex }
+ *
+ * Thinking segments are NOT persisted by route.ts (ephemeral CoT), so we
+ * don't expect them here — but we handle them defensively in case an older
+ * session still has them.
  *
  * `artifactIndex` is the 0-based position into the session's artifacts
  * array (sorted by created_at). We map it back to the actual ArtifactView
@@ -417,12 +540,33 @@ function attachInitialArtifacts(
     if (Array.isArray(rawSegments) && rawSegments.length > 0) {
       const rebuilt: PendingItem[] = [];
       for (const seg of rawSegments as Array<Record<string, unknown>>) {
-        if (seg.kind === "tool" && typeof seg.tool === "string" && typeof seg.content === "string") {
-          rebuilt.push({ kind: "tool", tool: seg.tool, content: seg.content });
+        if (
+          seg.kind === "tool" &&
+          typeof seg.tool === "string" &&
+          typeof seg.content === "string"
+        ) {
+          // Tool segments are distinct per tool_call_id — never merge.
+          rebuilt.push({
+            kind: "tool",
+            id: typeof seg.id === "string" ? seg.id : "",
+            tool: seg.tool,
+            content: seg.content,
+            completed: true,
+          });
         } else if (seg.kind === "thinking" && typeof seg.content === "string") {
-          rebuilt.push({ kind: "thinking", content: seg.content });
+          const last = rebuilt[rebuilt.length - 1];
+          if (last && last.kind === "thinking") {
+            last.content += seg.content;
+          } else {
+            rebuilt.push({ kind: "thinking", content: seg.content });
+          }
         } else if (seg.kind === "text" && typeof seg.content === "string") {
-          rebuilt.push({ kind: "text", content: seg.content });
+          const last = rebuilt[rebuilt.length - 1];
+          if (last && last.kind === "text") {
+            last.content += seg.content;
+          } else {
+            rebuilt.push({ kind: "text", content: seg.content });
+          }
         } else if (
           seg.kind === "artifact" &&
           typeof seg.artifactIndex === "number" &&
@@ -487,34 +631,99 @@ function attachInitialArtifacts(
     Data source status bar
     ============================================================ */
 
+/** Map an internal data source type to a human-readable label. */
+function dbTypeLabel(type: string): string {
+  switch (type) {
+    case "pg":
+      return "Postgres";
+    case "mysql":
+      return "MySQL";
+    case "bigquery":
+      return "BigQuery";
+    case "duckdb":
+      return "DuckDB";
+    case "sqlite":
+      return "SQLite";
+    default:
+      return type;
+  }
+}
+
 function DataSourceBar({
   sessionId,
   dataSource,
   uploading,
   onUpload,
+  onRemoveFile,
+  removingFileId,
+  onConnectDatabase,
+  connectingDatabase,
 }: {
   sessionId: string;
-  dataSource: { id: string; type: string; name: string } | null;
+  dataSource: DataSourceProp;
   uploading: boolean;
   onUpload: (file: File) => void;
+  onRemoveFile: (fileId: string) => void;
+  removingFileId: string | null;
+  onConnectDatabase: () => void;
+  connectingDatabase: boolean;
 }) {
+  const hasDataSource = !!dataSource;
+  // In files mode, the "Connect Postgres" link is hidden (mutual exclusion).
+  const isFilesMode = dataSource?.mode === "files";
+
   return (
     <div
       className={`flex items-center justify-between border-b border-border px-6 py-2 ${
-        dataSource ? "bg-muted/30" : "bg-muted/20"
+        hasDataSource ? "bg-muted/30" : "bg-muted/20"
       }`}
     >
-      <div className="flex items-center gap-2">
-        <Database className="h-3.5 w-3.5 text-muted-foreground" />
-        {dataSource ? (
+      <div className="flex min-w-0 items-center gap-2">
+        <Database className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        {dataSource?.mode === "database" ? (
           <>
             <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-              {dataSource.type === "pg" ? "Postgres" : dataSource.type}
+              {dbTypeLabel(dataSource.data.type)}
             </span>
-            <span className="font-mono text-sm font-medium text-foreground">
-              {dataSource.name}
+            <span className="truncate font-mono text-sm font-medium text-foreground">
+              {dataSource.data.name}
             </span>
           </>
+        ) : dataSource?.mode === "files" ? (
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+              {dataSource.files.length} file{dataSource.files.length === 1 ? "" : "s"}
+            </span>
+            {dataSource.files.map((f) => {
+              const isRemoving = removingFileId === f.id;
+              return (
+                <span
+                  key={f.id}
+                  className="inline-flex items-center gap-1.5 rounded border border-border bg-background/60 px-1.5 py-0.5 font-mono text-[11px] text-foreground"
+                >
+                  <span className="max-w-[12rem] truncate" title={f.name}>
+                    {f.name}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {f.format}·{formatBytes(f.size)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onRemoveFile(f.id)}
+                    disabled={isRemoving}
+                    aria-label={`Remove ${f.name}`}
+                    className="ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                  >
+                    {isRemoving ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <X className="h-3 w-3" />
+                    )}
+                  </button>
+                </span>
+              );
+            })}
+          </div>
         ) : (
           <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
             No data source
@@ -523,7 +732,7 @@ function DataSourceBar({
       </div>
 
       {/* Right side: upload link + connect/switch link */}
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-3">
         {uploading ? (
           <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
             <Loader2 className="h-3 w-3 animate-spin" />
@@ -547,16 +756,20 @@ function DataSourceBar({
             />
           </label>
         )}
-        <Link
-          href={`/sources/new?sessionId=${sessionId}`}
-          className={`font-mono text-[10px] uppercase tracking-wider transition-colors ${
-            dataSource
-              ? "text-muted-foreground hover:text-foreground"
-              : "text-primary hover:text-primary/80"
-          }`}
-        >
-          Connect Postgres
-        </Link>
+        {!isFilesMode && (
+          <button
+            type="button"
+            disabled={connectingDatabase}
+            onClick={onConnectDatabase}
+            className={`font-mono text-[10px] uppercase tracking-wider transition-colors disabled:opacity-50 ${
+              hasDataSource
+                ? "text-muted-foreground hover:text-foreground"
+                : "text-primary hover:text-primary/80"
+            }`}
+          >
+            {connectingDatabase ? "Connecting..." : "Connect database"}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -571,21 +784,34 @@ function WelcomeState({
   hasDataSource,
   uploading,
   onUpload,
+  onConnectDatabase,
+  connectingDatabase,
 }: {
   sessionId: string;
   hasDataSource: boolean;
   uploading: boolean;
   onUpload: (file: File) => void;
+  onConnectDatabase: () => void;
+  connectingDatabase: boolean;
 }) {
+  if (hasDataSource) return null;
+
   return (
     <div className="mb-12 flex flex-col items-center justify-center rounded-lg border border-dashed border-border px-6 py-16 text-center">
       <div className="flex items-center gap-3">
         {!hasDataSource && (
-          <Button asChild variant="outline" size="sm">
-            <Link href={`/sources/new?sessionId=${sessionId}`}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={connectingDatabase}
+            onClick={onConnectDatabase}
+          >
+            {connectingDatabase ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
               <Database className="h-3.5 w-3.5" />
-              Connect a Postgres database
-            </Link>
+            )}
+            {connectingDatabase ? "Connecting..." : "Connect a database"}
           </Button>
         )}
         <Button
@@ -683,17 +909,24 @@ function MessageRow({
                   key={i}
                   tool={group.item.tool}
                   content={group.item.content}
+                  running={!group.item.completed}
                 />
               );
             }
             return (
               <div
                 key={i}
-                className="whitespace-pre-wrap border-l-2 border-border pl-4 text-[15px] leading-relaxed text-foreground"
+                className={`border-l-2 border-border pl-4 text-[15px] leading-relaxed text-foreground ${
+                  isUser ? "whitespace-pre-wrap" : ""
+                }`}
               >
-                {group.item.content}
+                {isUser ? (
+                  group.item.content
+                ) : (
+                  <Markdown content={group.item.content} />
+                )}
                 {streaming && i === grouped.length - 1 && (
-                  <span className="ml-0.5 inline-block h-4 w-2 bg-primary animate-caret" />
+                  <span className="ml-0.5 inline-block h-4 w-2 bg-primary animate-caret text-foreground align-middle" />
                 )}
               </div>
             );
@@ -704,15 +937,19 @@ function MessageRow({
           {/* Content (legacy / user messages / DB-loaded messages) */}
           {message.content ? (
             <div
-              className={`ml-7 whitespace-pre-wrap border-l-2 pl-4 text-[15px] leading-relaxed ${
+              className={`ml-7 border-l-2 pl-4 text-[15px] leading-relaxed ${
                 isUser
-                  ? "border-primary text-foreground"
+                  ? "border-primary text-foreground whitespace-pre-wrap"
                   : "border-border text-foreground"
               }`}
             >
-              {message.content}
+              {isUser ? (
+                message.content
+              ) : (
+                <Markdown content={message.content} />
+              )}
               {streaming && (
-                <span className="ml-0.5 inline-block h-4 w-2 bg-primary animate-caret" />
+                <span className="ml-0.5 inline-block h-4 w-2 bg-primary animate-caret text-foreground align-middle" />
               )}
             </div>
           ) : streaming ? (
@@ -746,7 +983,13 @@ type SegmentGroup =
     }
   | {
       type: "tool";
-      item: { kind: "tool"; tool: string; content: string };
+      item: {
+        kind: "tool";
+        id: string;
+        tool: string;
+        content: string;
+        completed: boolean;
+      };
     }
   | { type: "artifact"; item: { kind: "artifact"; artifact: ArtifactView } }
   | { type: "text"; item: { kind: "text"; content: string } };
@@ -771,12 +1014,26 @@ function groupSegments(segments: PendingItem[]): SegmentGroup[] {
     } else if (seg.kind === "tool") {
       groups.push({
         type: "tool",
-        item: { kind: "tool", tool: seg.tool, content: seg.content },
+        item: {
+          kind: "tool",
+          id: seg.id,
+          tool: seg.tool,
+          content: seg.content,
+          completed: seg.completed,
+        },
       });
     } else if (seg.kind === "artifact") {
       groups.push({ type: "artifact", item: seg });
     } else {
-      groups.push({ type: "text", item: seg });
+      const last = groups[groups.length - 1];
+      if (last && last.type === "text") {
+        last.item.content += seg.content;
+      } else {
+        groups.push({
+          type: "text",
+          item: { kind: "text", content: seg.content },
+        });
+      }
     }
   }
   return groups;
@@ -785,17 +1042,26 @@ function groupSegments(segments: PendingItem[]): SegmentGroup[] {
 /** Inline render of a single tool step. Collapsible after execution
  *  completes — only the title row (wrench + node name) is shown by
  *  default; click to expand the full content. During streaming,
- *  `defaultOpen` is set so the user sees live tool output. */
+ *  `defaultOpen` is set so the user sees live tool output, and `running`
+ *  shows a spinner next to the tool name until the result arrives. */
 function ToolStepView({
   tool,
   content,
   defaultOpen = false,
+  running = false,
 }: {
   tool: string;
   content: string;
   defaultOpen?: boolean;
+  running?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  // Auto-collapse as soon as the tool finishes (running flips to false).
+  // This makes each tool step fold up right when its result arrives,
+  // instead of waiting for the whole turn to end.
+  useEffect(() => {
+    if (!running) setOpen(false);
+  }, [running]);
   return (
     <div className="border-l-2 border-primary/30 pl-4 text-muted-foreground">
       <button
@@ -812,8 +1078,11 @@ function ToolStepView({
         <span className="font-mono text-[10px] uppercase tracking-wider text-primary/70">
           {tool}
         </span>
+        {running && (
+          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary/60" />
+        )}
       </button>
-      {open && (
+      {open && content && (
         <p className="mt-1.5 whitespace-pre-wrap pl-5 font-mono text-xs leading-relaxed">
           {content}
         </p>
@@ -896,39 +1165,54 @@ function StreamingItemsView({ items }: { items: PendingItem[] }) {
                 tool={item.tool}
                 content={item.content}
                 defaultOpen
+                running={!item.completed}
               />
             );
           }
           if (item.kind === "thinking") {
-            return (
-              <div
-                key={i}
-                className="flex items-start gap-2 border-l-2 border-primary/30 pl-4 text-muted-foreground"
-              >
-                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary/60 animate-pulse-dot" />
-                <div className="flex-1">
-                  <span className="font-mono text-[10px] uppercase tracking-wider text-primary/70">
-                    thinking
-                  </span>
-                  <p className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
-                    {item.content}
-                  </p>
+            const isLast = i === items.length - 1;
+            if (isLast) {
+              // Still thinking — show live content with a pulsing dot.
+              return (
+                <div
+                  key={i}
+                  className="flex items-start gap-2 border-l-2 border-primary/30 pl-4 text-muted-foreground"
+                >
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary/60 animate-pulse-dot" />
+                  <div className="flex-1">
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-primary/70">
+                      thinking
+                    </span>
+                    <p className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
+                      {item.content}
+                    </p>
+                  </div>
                 </div>
-              </div>
+              );
+            }
+            // Thinking finished — collapse it (reuse ThinkingProcess which
+            // defaults to closed). This folds each thinking block as soon as
+            // the agent moves on to text/tool/artifact output.
+            return (
+              <ThinkingProcess
+                key={i}
+                items={[{ kind: "thinking", content: item.content }]}
+              />
             );
           }
           if (item.kind === "artifact") {
             return <ArtifactRenderer key={i} artifact={item.artifact} />;
           }
-          // text
+          // text — render Markdown live so headings/lists/tables/code update
+          // incrementally as tokens stream in, not only after the turn ends.
           return (
             <div
               key={i}
               className="border-l-2 border-border pl-4 text-[15px] leading-relaxed text-foreground"
             >
-              {item.content}
+              <Markdown content={item.content} />
               {i === items.length - 1 && (
-                <span className="ml-0.5 inline-block h-4 w-2 bg-primary animate-caret" />
+                <span className="ml-0.5 inline-block h-4 w-2 bg-primary animate-caret align-middle" />
               )}
             </div>
           );

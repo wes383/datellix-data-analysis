@@ -1,17 +1,22 @@
-import { Annotation, MessagesAnnotation } from "@langchain/langgraph";
 import type { SchemaColumn } from "@/lib/agent/schema";
 
 /**
- * Agent state definition (AgentState) — Phase 1
+ * Artifact & payload type definitions (Phase 2 refactor)
  *
- * Corresponds to PRD §6.2. Phase 0 had minimal state (messages + question).
- * Phase 1 adds: dataSourceId, schemaContext, sqlResults, artifacts, route.
+ * The Phase 1 AgentState Annotation (Route, QueryPlan, schemaContext,
+ * sqlResults, artifacts, iterations, …) has been removed: the ReAct agent
+ * in graph.ts now uses LangGraph's built-in MessagesAnnotation and drives
+ * everything through tool calls, so there is no custom graph state to
+ * declare.
+ *
+ * What remains here are the plain data types shared across the stack:
+ *   - Artifact / ChartPayload / TablePayload / CodePayload / SummaryPayload
+ *     → used by tools.ts (tool return artifacts), route.ts (SSE + DB persist),
+ *       and the frontend renderers (artifact-renderer.tsx, recharts-renderer.tsx).
+ *   - SqlResults → used by the SQL executors in tools.ts.
  */
 
-/** Route decision: which node should execute next */
-export type Route = "nlSql" | "summarize" | "makeChart" | "synthesize" | "end";
-
-/** Artifact types produced by the Agent (rendered by the frontend) */
+/** Artifact types produced by the Agent tools (rendered by the frontend) */
 export interface Artifact {
   type: "chart" | "table" | "code" | "summary";
   payload: ChartPayload | TablePayload | CodePayload | SummaryPayload;
@@ -45,7 +50,7 @@ export interface SummaryPayload {
   stats?: Record<string, number>;
 }
 
-/** SQL query results stored in state after nlSql node */
+/** SQL query results returned by the execute_sql tool / SQL executors */
 export interface SqlResults {
   sql: string;
   columns: string[];
@@ -54,52 +59,6 @@ export interface SqlResults {
   truncated: boolean;
 }
 
-export const AgentState = Annotation.Root({
-  // LangGraph 1.x: spread .spec (channel definitions)
-  ...MessagesAnnotation.spec,
-
-  /** Current session id (used as LangGraph thread_id) */
-  sessionId: Annotation<string>,
-
-  /** Current user question */
-  question: Annotation<string>,
-
-  /** Data source id bound to the session (file or pg) */
-  dataSourceId: Annotation<string>,
-
-  /** Data source type: file | pg | api */
-  dataSourceType: Annotation<string>,
-
-  /** Schema context retrieved from pgvector (injected into LLM prompt) */
-  schemaContext: Annotation<SchemaColumn[]>,
-
-  /** Route decision from the router node */
-  route: Annotation<Route>,
-
-  /** SQL results from the nlSql node */
-  sqlResults: Annotation<SqlResults>,
-
-  /** Whether the query results warrant a summary (descriptive stats) and
-   *  chart. Decided by the same LLM call that generates the SQL, so the
-   *  summarize / makeChart nodes can skip themselves without another call. */
-  needsSummary: Annotation<boolean>,
-  needsChart: Annotation<boolean>,
-
-  /** Chart spec (chartType / xKey / yKeys / title) decided alongside the
-   *  SQL. When needsChart is true, makeChart uses this to build the chart
-   *  artifact directly — no extra LLM call. */
-  chartSpec: Annotation<{
-    chartType: "bar" | "line" | "area" | "pie" | "scatter";
-    xKey: string;
-    yKeys: string[];
-    title?: string;
-  } | null>,
-
-  /** Artifacts produced by the Agent (charts, tables, summaries) */
-  artifacts: Annotation<Artifact[]>,
-
-  /** Iteration counter to prevent infinite loops */
-  iterations: Annotation<number>,
-});
-
-export type AgentStateType = typeof AgentState.State;
+// SchemaColumn is re-exported for convenience; many modules historically
+// imported it via state. New code should import from @/lib/agent/schema.
+export type { SchemaColumn };

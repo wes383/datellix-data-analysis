@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { uploadFile, blobPath } from "@/lib/blob/client";
 import { encryptConfig } from "@/lib/db/crypto";
 import { indexDataSourceSchema } from "@/lib/agent/schema";
@@ -82,16 +83,39 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 3. Bind data_source to session
+  // 3. Bind data_source to session (multi-file mode).
+  //    Mutually exclusive with single-DB mode: if the session already has a
+  //    database-type data_source bound via sessions.data_source_id, reject.
+  const { data: sessionCheck } = await supabase
+    .from("sessions")
+    .select("data_source_id")
+    .eq("id", sessionId)
+    .single();
+  if (sessionCheck?.data_source_id) {
+    // Session is in single-DB mode — cannot add files.
+    return NextResponse.json(
+      { error: "This session is connected to a database. Disconnect it first to upload files." },
+      { status: 409 },
+    );
+  }
+
+  await supabase.from("session_data_sources").insert({
+    session_id: sessionId,
+    data_source_id: dataSource.id,
+  });
+
+  // Set session title on first file upload only (when no title yet)
   await supabase
     .from("sessions")
-    .update({ data_source_id: dataSource.id, title: file.name })
-    .eq("id", sessionId);
+    .update({ title: file.name })
+    .eq("id", sessionId)
+    .is("title", null);
 
   // 4. Index schema (best-effort: don't fail the upload if indexing fails)
   let indexed = false;
   let indexError: string | undefined;
   try {
+    const admin = createAdminClient();
     await indexDataSourceSchema({
       dataSourceId: dataSource.id,
       userId: user.id,
@@ -99,6 +123,14 @@ export async function POST(req: NextRequest) {
       configEncrypted,
       sessionId,
       meta: { format, size: file.size },
+      // Persist the Daytona sandbox_id so it survives server restarts
+      persistSandboxId: async (sandboxId: string) => {
+        await admin
+          .from("sessions")
+          .update({ sandbox_id: sandboxId })
+          .eq("id", sessionId)
+          .is("sandbox_id", null);
+      },
     });
     indexed = true;
   } catch (err) {
