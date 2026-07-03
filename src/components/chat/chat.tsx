@@ -50,11 +50,12 @@ interface ChatProps {
 }
 
 /* DB Artifact shape (payload is Record<string, unknown>).
-   Type union matches lib/db/schema.ts Artifact (includes "forecast" for forward-compat). */
+   Type union matches lib/db/schema.ts Artifact (includes "forecast" and
+   "file" for forward-compat). */
 interface Artifact {
   id: string;
   session_id: string;
-  type: "chart" | "table" | "code" | "forecast" | "summary";
+  type: "chart" | "table" | "code" | "forecast" | "summary" | "file";
   payload: Record<string, unknown>;
   created_at: string;
 }

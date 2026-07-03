@@ -18,13 +18,14 @@ import type { SchemaColumn } from "@/lib/agent/schema";
 
 /** Artifact types produced by the Agent tools (rendered by the frontend) */
 export interface Artifact {
-  type: "chart" | "table" | "code" | "summary" | "forecast";
+  type: "chart" | "table" | "code" | "summary" | "forecast" | "file";
   payload:
     | ChartPayload
     | TablePayload
     | CodePayload
     | SummaryPayload
-    | ForecastPayload;
+    | ForecastPayload
+    | FilePayload;
 }
 
 export interface ChartPayload {
@@ -75,6 +76,31 @@ export interface CodePayload {
 export interface SummaryPayload {
   text: string;
   stats?: Record<string, number>;
+}
+
+/**
+ * File artifact — a downloadable CSV produced by the export_query tool.
+ *
+ * Unlike table artifacts (which render an HTML table inline AND offer CSV
+ * download), file artifacts are optimized for the "save these results as a
+ * file" use case: the frontend renders a compact download card with the
+ * filename, row count, and a Download button. No cloud storage is involved;
+ * the CSV content is carried inline in the payload (mirrors how table CSV
+ * export works via downloadCsv()).
+ */
+export interface FilePayload {
+  /** Suggested download filename (without extension). */
+  filename: string;
+  /** CSV column headers. */
+  columns: string[];
+  /** All result rows (not truncated to the 20-row preview limit). */
+  rows: unknown[][];
+  /** Total row count (may equal rows.length; kept for explicit display). */
+  rowCount: number;
+  /** Whether the underlying query hit the source-query max row limit. */
+  truncated?: boolean;
+  /** Optional human-readable title shown in the card header. */
+  title?: string;
 }
 
 /**

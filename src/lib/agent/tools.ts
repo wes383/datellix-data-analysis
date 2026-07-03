@@ -14,6 +14,7 @@ import type {
   ChartPayload,
   SummaryPayload,
   ForecastPayload,
+  FilePayload,
   Artifact,
 } from "@/lib/agent/state";
 import type {
@@ -1055,7 +1056,83 @@ export async function createAgentTools(
   );
 
   // ----------------------------------------------------------
-  // Tool 5: build_chart (returns a chart artifact)
+  // Tool 5: export_query (returns a downloadable file artifact)
+  // ----------------------------------------------------------
+  // Distinct from execute_sql: execute_sql renders a previewed HTML table
+  // (first 20 rows) for in-conversation inspection; export_query is for the
+  // explicit "save these results as a file" intent — it carries the full
+  // result set (up to MAX_ROWS) in a file artifact that the frontend renders
+  // as a compact download card. No cloud storage is involved; the CSV is
+  // generated client-side from the payload, exactly like table CSV export.
+  // ----------------------------------------------------------
+  const exportQueryTool = tool(
+    async ({ sql, filename, title }) => {
+      const validation = validateSelectSql(sql);
+      if (!validation.ok) {
+        return [
+          `SQL validation failed: ${validation.reason}\nSQL: ${sql}`,
+          null,
+        ] as [string, null];
+      }
+      try {
+        const results = await runSql(sql);
+        // Sanitize the filename: keep it simple so the client can safely
+        // append ".csv" without worrying about path separators or unicode.
+        const safeName =
+          (filename || title || "query_results")
+            .replace(/[^a-zA-Z0-9_-]+/g, "_")
+            .replace(/^_+|_+$/g, "")
+            .slice(0, 80) || "query_results";
+        const filePayload: FilePayload = {
+          filename: safeName,
+          columns: results.columns,
+          rows: results.rows,
+          rowCount: results.rowCount,
+          truncated: results.truncated,
+          title: title ?? safeName,
+        };
+        const artifact: Artifact = { type: "file", payload: filePayload };
+        const summary =
+          `Exported ${results.rowCount} row${results.rowCount === 1 ? "" : "s"} ` +
+          `(${results.columns.length} columns) as ${safeName}.csv` +
+          (results.truncated ? ` (truncated at ${MAX_ROWS} rows)` : "") +
+          `.`;
+        return [summary, artifact] as [string, Artifact];
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return [`Export failed: ${msg}\nSQL: ${sql}`, null] as [string, null];
+      }
+    },
+    {
+      name: "export_query",
+      description:
+        "Run a SELECT query and save the results as a downloadable CSV file. " +
+        "Use this when the user explicitly asks to save / download / export " +
+        "results as a file. Unlike execute_sql (which shows a previewed table " +
+        "inline), export_query carries the full result set (up to 1000 rows) " +
+        "and renders a compact download card. Returns a file artifact.",
+      schema: z.object({
+        sql: z
+          .string()
+          .describe("The read-only SELECT SQL whose results should be exported."),
+        filename: z
+          .string()
+          .optional()
+          .describe(
+            "Suggested download filename (without extension). " +
+              "Defaults to 'query_results'. Will be sanitized.",
+          ),
+        title: z
+          .string()
+          .optional()
+          .describe("Optional human-readable title for the download card."),
+      }),
+      responseFormat: "content_and_artifact" as const,
+    },
+  );
+
+  // ----------------------------------------------------------
+  // Tool 6: build_chart (returns a chart artifact)
   // ----------------------------------------------------------
   const buildChartTool = tool(
     async ({ sql, chartType, xKey, yKeys, title, uiConfig }) => {
@@ -1688,6 +1765,7 @@ print(figure_json)
     retrieveSchemaTool,
     executeSqlTool,
     summarizeDataTool,
+    exportQueryTool,
     buildChartTool,
     runPythonTool,
     runForecastTool,

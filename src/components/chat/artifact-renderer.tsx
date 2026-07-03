@@ -2,7 +2,7 @@
 
 import { forwardRef, useRef, useState } from "react";
 import { toPng } from "html-to-image";
-import { BarChart3, Code2, Download, FileText, LineChart, Loader2, Table2 } from "lucide-react";
+import { BarChart3, Code2, Download, FileText, FileDown, LineChart, Loader2, Table2 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -16,6 +16,7 @@ import { PlotlyRenderer } from "@/components/charts/plotly-renderer";
 import type {
   ChartPayload,
   CodePayload,
+  FilePayload,
   ForecastPayload,
   SummaryPayload,
   TablePayload,
@@ -31,7 +32,8 @@ export type ArtifactType =
   | "table"
   | "code"
   | "forecast"
-  | "summary";
+  | "summary"
+  | "file";
 
 export interface ArtifactView {
   type: ArtifactType;
@@ -39,6 +41,7 @@ export interface ArtifactView {
     | ChartPayload
     | TablePayload
     | CodePayload
+    | FilePayload
     | SummaryPayload
     | ForecastPayload;
   /** Source node that produced this artifact (for label) */
@@ -58,6 +61,7 @@ const ARTIFACT_META: Record<
   code: { label: "Code", icon: Code2 },
   forecast: { label: "Forecast", icon: LineChart },
   summary: { label: "Summary", icon: FileText },
+  file: { label: "File", icon: FileDown },
 };
 
 /**
@@ -80,6 +84,7 @@ export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
   /** Whether this artifact shows a header-level download button. */
   const canExport =
     artifact.type === "table" ||
+    artifact.type === "file" ||
     (artifact.type === "chart" &&
       (artifact.payload as ChartPayload).renderer !== "plotly") ||
     artifact.type === "forecast";
@@ -91,6 +96,10 @@ export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
       if (artifact.type === "table") {
         const payload = artifact.payload as TablePayload;
         const filename = sanitizeFilename(payload.title ?? "table") + ".csv";
+        downloadCsv(payload.columns, payload.rows, filename);
+      } else if (artifact.type === "file") {
+        const payload = artifact.payload as FilePayload;
+        const filename = sanitizeFilename(payload.filename) + ".csv";
         downloadCsv(payload.columns, payload.rows, filename);
       } else if (chartContainerRef.current) {
         // chart (recharts) + forecast both render via RechartsRenderer
@@ -129,10 +138,14 @@ export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
             disabled={exporting}
             className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
             aria-label={
-              artifact.type === "table" ? "Download CSV" : "Download PNG"
+              artifact.type === "table" || artifact.type === "file"
+                ? "Download CSV"
+                : "Download PNG"
             }
             title={
-              artifact.type === "table" ? "Download CSV" : "Download PNG"
+              artifact.type === "table" || artifact.type === "file"
+                ? "Download CSV"
+                : "Download PNG"
             }
           >
             {exporting ? (
@@ -175,6 +188,9 @@ function renderBody(
     case "table":
       return <TableArtifactView payload={artifact.payload as TablePayload} />;
 
+    case "file":
+      return <FileArtifactView payload={artifact.payload as FilePayload} />;
+
     case "code":
       return <CodeArtifactView payload={artifact.payload as CodePayload} />;
 
@@ -201,6 +217,27 @@ function renderBody(
 /* ============================================================
     Table artifact
     ============================================================ */
+
+/** Compact download card for file artifacts.
+ *  Shows filename, row/column counts, and a prominent Download CSV button.
+ *  No inline table — the user's intent is to download, not inspect rows. */
+function FileArtifactView({ payload }: { payload: FilePayload }) {
+  const { filename, columns, rowCount, title, truncated } = payload;
+  return (
+    <div className="flex items-center gap-3 py-1">
+      <FileDown className="h-8 w-8 shrink-0 text-primary" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-display text-sm font-medium tracking-tight text-foreground">
+          {title ?? filename}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {filename}.csv · {rowCount.toLocaleString()} row{rowCount === 1 ? "" : "s"} · {columns.length} column{columns.length === 1 ? "" : "s"}
+          {truncated ? " · truncated" : ""}
+        </p>
+      </div>
+    </div>
+  );
+}
 
 function TableArtifactView({ payload }: { payload: TablePayload }) {
   const { columns, rows, title } = payload;

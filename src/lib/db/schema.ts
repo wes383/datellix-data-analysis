@@ -115,7 +115,7 @@ export interface Message {
 export interface Artifact {
   id: string;
   session_id: string;
-  type: "chart" | "table" | "code" | "forecast" | "summary";
+  type: "chart" | "table" | "code" | "forecast" | "summary" | "file";
   payload: Record<string, unknown>;
   created_at: string;
 }
