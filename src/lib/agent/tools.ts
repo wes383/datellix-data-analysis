@@ -989,6 +989,7 @@ export async function createAgentTools(
             rows: results.rows,
             truncated: results.truncated,
             title: "Query Results",
+            sql: results.sql,
           },
         };
         return [text, artifact] as [string, Artifact];
@@ -1161,7 +1162,10 @@ export async function createAgentTools(
         const text =
           `Chart "${chartTitle}" built (${chartType}). ` +
           `x: ${xKey}, y: ${yKeys.join(", ")}, ${results.rowCount} rows.`;
-        const artifact: Artifact = { type: "chart", payload: chartPayload };
+        const artifact: Artifact = {
+          type: "chart",
+          payload: { ...chartPayload, sql },
+        };
         return [text, artifact] as [string, Artifact];
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -1724,12 +1728,16 @@ print(figure_json)
           payload: {
             renderer: "plotly" as const,
             plotlyFigure: figure,
+            // Store pythonCode so the chart can be manually refreshed later
+            // (re-run SQL → re-run Python → new figure).
+            pythonCode: pythonCode,
             // Required Recharts fields (unused but must satisfy ChartPayload type):
             chartType: "scatter" as const,
             data: [],
             xKey: "",
             yKeys: [],
             title,
+            sql,
           } as ChartPayload,
         };
         return [

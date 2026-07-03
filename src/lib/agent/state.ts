@@ -35,6 +35,9 @@ export interface ChartPayload {
   xKey: string;
   yKeys: string[];
   title?: string;
+  /** SQL used to generate the chart data. Stored in DB for re-query on display.
+   *  Not present in older artifacts (backward compat). */
+  sql?: string;
   /**
    * Optional field name in `data` used to split scatter points into
    * separately-colored series (e.g. "cluster" → one Scatter per cluster).
@@ -45,6 +48,10 @@ export interface ChartPayload {
   renderer?: "recharts" | "plotly";
   /** Plotly figure JSON (data + layout). Present only when renderer === "plotly". */
   plotlyFigure?: Record<string, unknown>;
+  /** Python code that builds the Plotly figure (present only for Plotly charts).
+   *  Stored alongside `sql` so the chart can be manually re-generated when its
+   *  bound data source changes (re-run SQL → re-run Python → new figure). */
+  pythonCode?: string;
   /** Optional Recharts UI configuration overrides */
   uiConfig?: {
     colors?: string[];
@@ -65,6 +72,8 @@ export interface TablePayload {
   title?: string;
   /** Whether the result set was truncated at the source-query max row limit */
   truncated?: boolean;
+  /** SQL used to generate the table. Stored in DB for re-query on display. */
+  sql?: string;
 }
 
 export interface CodePayload {

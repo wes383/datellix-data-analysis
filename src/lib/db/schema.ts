@@ -133,6 +133,41 @@ export interface UsageLog {
 }
 
 // ============================================================
+// Chart library (user-saved charts)
+// ============================================================
+
+/** A user-saved chart in the chart library.
+ *  Recharts charts store spec + SQL (no inline data); data is re-queried
+ *  on display. Plotly charts store the full figure JSON. */
+export interface Chart {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string | null;
+  /** Chart spec JSONB:
+   *    Recharts: { chartType, xKey, yKeys, title, uiConfig, renderer:"recharts" }
+   *    Plotly:    { renderer:"plotly", plotlyFigure:{...}, title } */
+  spec: Record<string, unknown>;
+  /** SQL to re-execute on display (null for Plotly full-figure mode). */
+  sql_text: string | null;
+  /** "recharts" | "plotly" */
+  renderer: "recharts" | "plotly";
+  /** Originating session (set null if session deleted). */
+  source_session_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Join table row for chart ↔ data source binding.
+ *  DB-type chart: 1 row. File-type chart: N rows (multi-file SQL). */
+export interface ChartDataSource {
+  id: string;
+  chart_id: string;
+  data_source_id: string;
+  added_at: string;
+}
+
+// ============================================================
 // User settings (per-user LLM + storage configuration)
 // ============================================================
 

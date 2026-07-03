@@ -12,11 +12,17 @@ import {
  * passes it to the shared <SourceForm> in edit mode. Password/credentials
  * fields are blank by default; leaving them blank preserves the existing
  * ciphertext (handled by PATCH /api/sources/[id]).
+ *
+ * Accepts an optional `?from=<path>` search param so callers (e.g. the chart
+ * detail page) can control where the user lands after saving or cancelling.
+ * Falls back to /sources when the param is absent.
  */
 export default async function EditSourcePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ from?: string }>;
 }) {
   const supabase = await createClient();
   const {
@@ -27,6 +33,9 @@ export default async function EditSourcePage({
   }
 
   const { id } = await params;
+  const { from } = await searchParams;
+  // Only allow relative paths (starting with /) to prevent open redirect.
+  const returnUrl = from && from.startsWith("/") ? from : "/sources";
 
   const { data: source } = await supabase
     .from("data_sources")
@@ -50,8 +59,8 @@ export default async function EditSourcePage({
     <SourceForm
       mode="edit"
       initialValues={initialValues}
-      doneHref="/sources"
-      cancelHref="/sources"
+      doneHref={returnUrl}
+      cancelHref={returnUrl}
     />
   );
 }

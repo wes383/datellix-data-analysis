@@ -28,7 +28,6 @@ export default async function AppLayout({
           Session,
           "id" | "title" | "updated_at"
         >[]}
-        userEmail={user.email ?? null}
       />
       <main className="flex-1 overflow-hidden">{children}</main>
     </div>

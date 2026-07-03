@@ -50,7 +50,11 @@ function isFileType(t: DbType): t is "duckdb" | "sqlite" | "file" {
  * Create mode: POSTs to /api/sources (FormData for file types, JSON otherwise).
  * Edit mode:   PATCHes /api/sources/[id]. Password/credentials fields are
  *              optional — leaving them blank preserves the existing secret.
- *              File types (duckdb/sqlite) can only be renamed in edit mode.
+ *              File types (file/duckdb/sqlite) can additionally have their
+ *              underlying file replaced via POST /api/sources/[id]/replace-file
+ *              — when a new file is selected, it's uploaded first, then the
+ *              normal PATCH runs for the name change. The data source ID
+ *              stays the same so charts bound to it auto-update.
  */
 export function SourceForm({
   mode,
@@ -82,6 +86,12 @@ export function SourceForm({
     dataset: "",
   });
   const [file, setFile] = useState<File | null>(null);
+  // In edit mode, a file selected to replace the existing underlying file
+  // (file/duckdb/sqlite types only). null = no replacement, just rename.
+  const [replaceFile, setReplaceFile] = useState<File | null>(null);
+  // True while the replace-file upload is in flight (separate from the
+  // subsequent PATCH for the name change).
+  const [replacingFile, setReplacingFile] = useState(false);
 
   function update<K extends keyof typeof form>(key: K, value: string) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -135,6 +145,31 @@ export function SourceForm({
       let res: Response;
 
       if (isEdit) {
+        // If this is a file-type source and the user picked a new file,
+        // upload it first via the replace-file endpoint. The data source
+        // ID stays the same — charts bound to it will use the new file on
+        // next re-query. Then proceed with the normal PATCH for the name
+        // change below.
+        if (isFileType(type) && replaceFile) {
+          setReplacingFile(true);
+          try {
+            const fd = new FormData();
+            fd.append("file", replaceFile);
+            const replaceRes = await fetch(
+              `/api/sources/${initialValues!.id}/replace-file`,
+              { method: "POST", body: fd },
+            );
+            if (!replaceRes.ok) {
+              const errBody = await replaceRes.text();
+              throw new Error(
+                errBody || `File replace failed: ${replaceRes.status}`,
+              );
+            }
+          } finally {
+            setReplacingFile(false);
+          }
+        }
+
         // PATCH with JSON body. Password/credentials omitted when blank so
         // the server preserves the existing ciphertext.
         const body: Record<string, unknown> = {
@@ -223,7 +258,12 @@ export function SourceForm({
           });
         }
       } else {
-        toast.success(`Data source "${form.name.trim()}" updated`);
+        toast.success(`Data source "${form.name.trim()}" updated`, {
+          description:
+            isFileType(type) && replaceFile
+              ? "File replaced — charts will use the new data on next re-query."
+              : undefined,
+        });
       }
 
       router.refresh();
@@ -521,10 +561,51 @@ export function SourceForm({
               )}
 
               {isFile && isEdit && (
-                <p className="rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-muted-foreground">
-                  File data sources can only be renamed. To replace the file,
-                  delete this source and create a new one.
-                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="replaceFile">Replace file (optional)</Label>
+                  <Input
+                    id="replaceFile"
+                    type="file"
+                    accept={
+                      type === "file"
+                        ? ".csv,.xlsx,.parquet"
+                        : type === "duckdb"
+                          ? ".duckdb"
+                          : ".db,.sqlite,.sqlite3"
+                    }
+                    onChange={(e) =>
+                      setReplaceFile(e.target.files?.[0] ?? null)
+                    }
+                    disabled={replacingFile}
+                  />
+                  {replaceFile && (
+                    <p className="font-mono text-[10px] text-muted-foreground">
+                      Selected: {replaceFile.name} (
+                      {(replaceFile.size / 1024).toFixed(1)} KB)
+                    </p>
+                  )}
+                  <p className="font-mono text-[10px] text-muted-foreground">
+                    Upload a new file to replace the existing one. Charts bound
+                    to this data source will automatically use the new data.
+                  </p>
+                  {(() => {
+                    const filename =
+                      (meta.filename as string) ??
+                      (typeof meta.blobUrl === "string"
+                        ? String(meta.blobUrl).split("/").pop()
+                        : undefined);
+                    const size = meta.size as number | undefined;
+                    return (
+                      <p className="font-mono text-[10px] text-muted-foreground">
+                        Current file:
+                        {filename ? ` ${filename}` : " —"}
+                        {typeof size === "number"
+                          ? ` (${(size / 1024).toFixed(1)} KB)`
+                          : ""}
+                      </p>
+                    );
+                  })()}
+                </div>
               )}
 
               {sessionId && !isEdit && (
@@ -542,7 +623,11 @@ export function SourceForm({
                   {submitting ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      {isEdit ? "Saving…" : "Connecting…"}
+                      {replacingFile
+                        ? "Replacing file…"
+                        : isEdit
+                          ? "Saving…"
+                          : "Connecting…"}
                     </>
                   ) : isEdit ? (
                     "Save changes"

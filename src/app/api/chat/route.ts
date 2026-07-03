@@ -14,7 +14,7 @@ import {
   ToolMessage,
   type BaseMessage,
 } from "@langchain/core/messages";
-import type { Artifact } from "@/lib/agent/state";
+import type { Artifact, ChartPayload, TablePayload } from "@/lib/agent/state";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -530,19 +530,46 @@ export async function POST(req: NextRequest) {
               collectedArtifacts.push(artifact);
               const artifactIndex = collectedArtifacts.length - 1;
               send({ artifact, toolCallId: id });
-              segments.push({
+              const artifactSeg: {
+                kind: "artifact";
+                artifactType: string;
+                artifactIndex: number;
+                artifactId?: string;
+              } = {
                 kind: "artifact",
                 artifactType: artifact.type,
                 artifactIndex,
-              });
+              };
+              segments.push(artifactSeg);
               // Persist artifact to the artifacts table.
-              const { error: artifactInsertError } = await supabase
+              // Space optimization: strip inline data for Recharts charts
+              // and tables — only spec + SQL is stored. Plotly charts keep
+              // their full figure (re-running Python on every view would
+              // be too slow). On history load, the client re-queries the
+              // session's data source to regenerate the stripped data.
+              let dbPayload = artifact.payload as unknown as Record<string, unknown>;
+              if (artifact.type === "chart") {
+                const cp = artifact.payload as unknown as ChartPayload;
+                if (cp.renderer !== "plotly") {
+                  // Recharts: strip data array, keep spec + sql
+                  dbPayload = { ...cp, data: [] };
+                }
+                // Plotly: store full figure (no change)
+              } else if (artifact.type === "table") {
+                const tp = artifact.payload as unknown as TablePayload;
+                // Strip rows, keep columns + sql
+                dbPayload = { ...tp, rows: [] };
+              }
+              // file / code / forecast / summary: unchanged
+              const { data: insertedArtifact, error: artifactInsertError } = await supabase
                 .from("artifacts")
                 .insert({
                   session_id: sessionId,
                   type: artifact.type,
-                  payload: artifact.payload as unknown as Record<string, unknown>,
-                });
+                  payload: dbPayload,
+                })
+                .select("id")
+                .single();
               if (artifactInsertError) {
                 // Log so failures don't silently disappear on page refresh
                 // (e.g. CHECK constraint rejecting a new artifact type).
@@ -553,6 +580,13 @@ export async function POST(req: NextRequest) {
                   artifact.type,
                 );
               }
+              // Store the DB-generated artifact id in the segment so that
+              // on history reload we can look up the artifact by id instead
+              // of by positional index. This prevents index-shift bugs when
+              // an artifact fails to persist (e.g. Plotly figure too large)
+              // — without this, a missing artifact causes all subsequent
+              // artifactIndex lookups to point at the wrong artifact.
+              artifactSeg.artifactId = insertedArtifact?.id;
             }
           }
         }

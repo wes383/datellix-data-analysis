@@ -64,8 +64,29 @@ export function SourcesList({ sources }: SourcesListProps) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function handleDelete(id: string, name: string) {
-    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    // Disable the button early while we fetch the bound chart count.
     setDeletingId(id);
+    let chartCount = 0;
+    try {
+      const res = await fetch(`/api/sources/${id}/charts`);
+      if (res.ok) {
+        const data = (await res.json()) as { count?: number };
+        chartCount = typeof data.count === "number" ? data.count : 0;
+      }
+    } catch {
+      // If the count lookup fails, fall back to a simple confirm.
+      chartCount = 0;
+    }
+
+    const message =
+      chartCount > 0
+        ? `Delete "${name}"? This will also permanently delete ${chartCount} chart(s) bound to this data source. This cannot be undone.`
+        : `Delete "${name}"? This cannot be undone.`;
+
+    if (!confirm(message)) {
+      setDeletingId(null);
+      return;
+    }
     startTransition(async () => {
       try {
         const res = await fetch(`/api/sources/${id}`, { method: "DELETE" });

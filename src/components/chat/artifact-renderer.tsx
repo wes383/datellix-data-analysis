@@ -2,7 +2,7 @@
 
 import { forwardRef, useEffect, useRef, useState } from "react";
 import { toPng } from "html-to-image";
-import { BarChart3, Code2, Download, FileText, FileDown, LineChart, Loader2, Table2 } from "lucide-react";
+import { BarChart3, Bookmark, Code2, Download, FileText, FileDown, LineChart, Loader2, RefreshCw, Table2 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -11,8 +11,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
 import { RechartsRenderer } from "@/components/charts/recharts-renderer";
 import { PlotlyRenderer } from "@/components/charts/plotly-renderer";
+import { SaveChartDialog } from "@/components/library/save-chart-dialog";
 import type {
   ChartPayload,
   CodePayload,
@@ -50,6 +52,13 @@ export interface ArtifactView {
 
 interface ArtifactRendererProps {
   artifact: ArtifactView;
+  /** Session id — when provided, charts/tables with stripped data re-query
+   *  their SQL on history load, and chart artifacts show a "Save to library"
+   *  button. Omitted for non-chat render contexts. */
+  sessionId?: string;
+  /** Data source ids bound to the session — needed to save a chart to the
+   *  library. Derived from the Chat's dataSource prop. */
+  dataSourceIds?: string[];
 }
 
 const ARTIFACT_META: Record<
@@ -168,7 +177,11 @@ function DownloadMenu({
  *   - chart (plotly)              → PNG handled inside PlotlyRenderer
  *   - table / file                → multi-format dropdown (Excel / CSV / JSON)
  */
-export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
+export function ArtifactRenderer({
+  artifact,
+  sessionId,
+  dataSourceIds,
+}: ArtifactRendererProps) {
   const meta = ARTIFACT_META[artifact.type];
   const Icon = meta.icon;
 
@@ -176,28 +189,127 @@ export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
 
+  // ---- Save-to-library (chart artifacts only) ----
+  const [saveOpen, setSaveOpen] = useState(false);
+  const canSaveToLibrary =
+    artifact.type === "chart" &&
+    !!sessionId &&
+    !!dataSourceIds &&
+    dataSourceIds.length > 0;
+
+  // ---- Chat history rehydration ----
+  // Recharts charts and tables are persisted without inline data (space
+  // optimization). On history load, re-execute the stored SQL against the
+  // session's data source to regenerate the data. Plotly charts store their
+  // full figure and skip this. During live streaming the data is present,
+  // so the re-query only triggers when data/rows is empty AND sql exists.
+  const [rehydrating, setRehydrating] = useState(false);
+  const [rehydrateError, setRehydrateError] = useState<string | null>(null);
+  const [rehydrated, setRehydrated] = useState<{
+    columns: string[];
+    rows: unknown[][];
+    rowCount: number;
+    truncated: boolean;
+  } | null>(null);
+  const lastSqlRef = useRef<string | null>(null);
+
+  async function rehydrate(sql: string) {
+    if (!sessionId) return;
+    setRehydrating(true);
+    setRehydrateError(null);
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sql }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(
+          (err as { error?: string }).error || `Failed: ${res.status}`,
+        );
+      }
+      const data = await res.json();
+      setRehydrated({
+        columns: (data.columns as string[]) ?? [],
+        rows: (data.rows as unknown[][]) ?? [],
+        rowCount: (data.rowCount as number) ?? 0,
+        truncated: (data.truncated as boolean) ?? false,
+      });
+    } catch (err) {
+      setRehydrateError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRehydrating(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!sessionId) return;
+    let sqlToRun: string | undefined;
+    if (artifact.type === "chart") {
+      const cp = artifact.payload as ChartPayload;
+      if (cp.renderer !== "plotly" && (cp.data?.length ?? 0) === 0 && cp.sql) {
+        sqlToRun = cp.sql;
+      }
+    } else if (artifact.type === "table") {
+      const tp = artifact.payload as TablePayload;
+      if ((tp.rows?.length ?? 0) === 0 && tp.sql) {
+        sqlToRun = tp.sql;
+      }
+    }
+    if (sqlToRun) {
+      lastSqlRef.current = sqlToRun;
+      void rehydrate(sqlToRun);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [artifact, sessionId]);
+
+  // Merge rehydrated data into the artifact payload so renderBody sees the
+  // full data (Recharts chart data array / table rows).
+  let effectivePayload = artifact.payload;
+  if (rehydrated) {
+    if (artifact.type === "chart") {
+      const cp = artifact.payload as ChartPayload;
+      effectivePayload = {
+        ...cp,
+        data: buildChartData(rehydrated.columns, rehydrated.rows),
+      } as ChartPayload;
+    } else if (artifact.type === "table") {
+      const tp = artifact.payload as TablePayload;
+      effectivePayload = {
+        ...tp,
+        rows: rehydrated.rows,
+        truncated: rehydrated.truncated,
+      } as TablePayload;
+    }
+  }
+  const effectiveArtifact: ArtifactView = {
+    ...artifact,
+    payload: effectivePayload,
+  };
+
   // Table-like artifacts (table / file) show a multi-format download menu
   // (Excel / CSV / JSON). Chart-like artifacts (chart non-plotly / forecast)
-  // show a single PNG download button.
+  // show a single PNG download button. Derive from the effective payload so
+  // rehydrated tables export their refreshed rows.
   const tableExport =
     artifact.type === "table" || artifact.type === "file";
   const pngExport =
     (artifact.type === "chart" &&
-      (artifact.payload as ChartPayload).renderer !== "plotly") ||
+      (effectivePayload as ChartPayload).renderer !== "plotly") ||
     artifact.type === "forecast";
 
-  // Extract columns / rows / base filename for table-like exports.
   const tableData = tableExport
     ? artifact.type === "table"
       ? {
-          columns: (artifact.payload as TablePayload).columns,
-          rows: (artifact.payload as TablePayload).rows,
-          baseName: (artifact.payload as TablePayload).title ?? "table",
+          columns: (effectivePayload as TablePayload).columns,
+          rows: (effectivePayload as TablePayload).rows,
+          baseName: (effectivePayload as TablePayload).title ?? "table",
         }
       : {
-          columns: (artifact.payload as FilePayload).columns,
-          rows: (artifact.payload as FilePayload).rows,
-          baseName: (artifact.payload as FilePayload).filename,
+          columns: (effectivePayload as FilePayload).columns,
+          rows: (effectivePayload as FilePayload).rows,
+          baseName: (effectivePayload as FilePayload).filename,
         }
     : null;
 
@@ -206,7 +318,7 @@ export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
     setExporting(true);
     try {
       if (chartContainerRef.current) {
-        const payload = artifact.payload as ChartPayload | ForecastPayload;
+        const payload = effectivePayload as ChartPayload | ForecastPayload;
         const title =
           (payload as ChartPayload).title ??
           (artifact.type === "forecast" ? "forecast" : "chart");
@@ -225,6 +337,11 @@ export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
     }
   }
 
+  // For chart artifacts: compute the spec to save (Recharts strips data;
+  // Plotly keeps full figure) — matches the chat persistence strategy.
+  const chartPayloadForSave =
+    artifact.type === "chart" ? (artifact.payload as ChartPayload) : null;
+
   return (
     <div className="animate-fade-up rounded-lg border border-border bg-card p-4 shadow-sm">
       {/* Header */}
@@ -234,6 +351,17 @@ export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
           {meta.label}
           {artifact.node ? ` · ${artifact.node}` : ""}
         </span>
+        {canSaveToLibrary && (
+          <button
+            type="button"
+            onClick={() => setSaveOpen(true)}
+            className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            aria-label="Save to library"
+            title="Save to library"
+          >
+            <Bookmark className="h-3.5 w-3.5" />
+          </button>
+        )}
         {tableData && (
           <DownloadMenu
             columns={tableData.columns}
@@ -246,7 +374,7 @@ export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
             type="button"
             onClick={handlePngExport}
             disabled={exporting}
-            className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+            className={`${canSaveToLibrary ? "" : "ml-auto"} inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50`}
             aria-label="Download PNG"
             title="Download PNG"
           >
@@ -261,8 +389,58 @@ export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
 
       {/* Body */}
       <div className="artifact-body">
-        {renderBody(artifact, chartContainerRef)}
+        {rehydrating ? (
+          <div className="flex h-40 items-center justify-center gap-2">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">
+              Re-loading data…
+            </span>
+          </div>
+        ) : rehydrateError ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-8">
+            <p className="text-sm text-muted-foreground">Data unavailable</p>
+            <p className="max-w-md break-words text-center font-mono text-[10px] text-muted-foreground/70">
+              {rehydrateError}
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (lastSqlRef.current) void rehydrate(lastSqlRef.current);
+              }}
+              className="mt-2"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Retry
+            </Button>
+          </div>
+        ) : (
+          renderBody(effectiveArtifact, chartContainerRef)
+        )}
       </div>
+
+      {/* Save-to-library dialog (chart artifacts only) */}
+      {canSaveToLibrary &&
+        chartPayloadForSave &&
+        sessionId &&
+        dataSourceIds && (
+          <SaveChartDialog
+            open={saveOpen}
+            onClose={() => setSaveOpen(false)}
+            spec={
+              chartPayloadForSave.renderer === "plotly"
+                ? { ...chartPayloadForSave }
+                : { ...chartPayloadForSave, data: [] }
+            }
+            sql={chartPayloadForSave.sql}
+            renderer={
+              chartPayloadForSave.renderer === "plotly" ? "plotly" : "recharts"
+            }
+            defaultTitle={chartPayloadForSave.title ?? "Untitled chart"}
+            sessionId={sessionId}
+            dataSourceIds={dataSourceIds}
+          />
+        )}
     </div>
   );
 }
@@ -552,6 +730,30 @@ function formatStat(value: number): string {
     return value.toExponential(2);
   }
   return value.toFixed(4);
+}
+
+/**
+ * Build a chart data array (array of row objects keyed by column name) from
+ * re-queried columns + array rows. Mirrors the logic in chart-viewer.tsx:
+ * numeric strings are coerced to numbers so Recharts renders axes correctly.
+ * Capped at 100 rows (same as the in-memory chart render limit).
+ */
+function buildChartData(
+  columns: string[],
+  rows: unknown[][],
+): Record<string, unknown>[] {
+  return rows.slice(0, 100).map((row) => {
+    const obj: Record<string, unknown> = {};
+    columns.forEach((col, idx) => {
+      const val = row[idx];
+      if (typeof val === "string" && val !== "" && !isNaN(Number(val))) {
+        obj[col] = Number(val);
+      } else {
+        obj[col] = val;
+      }
+    });
+    return obj;
+  });
 }
 
 /* ============================================================

@@ -255,6 +255,24 @@ export async function DELETE(
 
   const admin = createAdminClient();
 
+  // Find all charts bound to this data source and delete them explicitly.
+  // Deleting the charts cascades to delete their `chart_data_sources` rows,
+  // but we delete the charts themselves (not just the join rows) so the
+  // chart library entries are cleaned up along with the data source.
+  const { data: boundLinks } = await admin
+    .from("chart_data_sources")
+    .select("chart_id")
+    .eq("data_source_id", dataSourceId);
+
+  if (boundLinks && boundLinks.length > 0) {
+    const chartIds = boundLinks
+      .map((l) => l.chart_id)
+      .filter((id): id is string => typeof id === "string");
+    if (chartIds.length > 0) {
+      await admin.from("charts").delete().in("id", chartIds);
+    }
+  }
+
   if (sessionId) {
     // Mode 1: unlink from this session only.
     await admin

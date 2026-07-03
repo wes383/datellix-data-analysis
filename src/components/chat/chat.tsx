@@ -252,6 +252,17 @@ export function Chat({
     .map((it) => it.content)
     .join("");
 
+  // Active session id (resolved after first message for a pending session)
+  // and the data source ids bound to it. Passed down to ArtifactRenderer so
+  // chart artifacts can be saved to the library, and so Recharts charts /
+  // tables with stripped data can re-query their SQL on history load.
+  const activeSessionId = resolvedSessionId || sessionId;
+  const dataSourceIds = dataSource?.mode === "database"
+    ? [dataSource.data.id]
+    : dataSource?.mode === "files"
+      ? dataSource.files.map((f) => f.id)
+      : [];
+
   useEffect(() => {
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
@@ -538,13 +549,19 @@ export function Chat({
                 message={m}
                 index={idx}
                 isLast={idx === messages.length - 1 && pendingItems.length === 0}
+                sessionId={activeSessionId}
+                dataSourceIds={dataSourceIds}
               />
             ))}
 
             {/* Streaming turn: items rendered in arrival order so tool
                 progress, artifacts, and text interleave naturally. */}
             {pendingItems.length > 0 && (
-              <StreamingItemsView items={pendingItems} />
+              <StreamingItemsView
+                items={pendingItems}
+                sessionId={activeSessionId}
+                dataSourceIds={dataSourceIds}
+              />
             )}
 
             {streaming &&
@@ -657,6 +674,13 @@ function attachInitialArtifacts(
   const sortedArtifacts = [...artifacts].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
   );
+  // Map from artifact DB id → artifact for O(1) lookup. Used when a segment
+  // carries `artifactId` (new segments do). Falls back to positional
+  // `artifactIndex` for older segments that predate this field.
+  const artifactById = new Map<string, Artifact>();
+  for (const a of sortedArtifacts) {
+    artifactById.set(a.id, a);
+  }
 
   const result: ChatMessage[] = messages.map((m) => ({ ...m }));
   let legacyArtifactIdx = 0;
@@ -700,19 +724,31 @@ function attachInitialArtifacts(
           } else {
             rebuilt.push({ kind: "text", content: seg.content });
           }
-        } else if (
-          seg.kind === "artifact" &&
-          typeof seg.artifactIndex === "number" &&
-          sortedArtifacts[seg.artifactIndex]
-        ) {
-          const art = sortedArtifacts[seg.artifactIndex];
-          rebuilt.push({
-            kind: "artifact",
-            artifact: {
-              type: art.type,
-              payload: art.payload as unknown as ArtifactView["payload"],
-            },
-          });
+        } else if (seg.kind === "artifact") {
+          // Prefer DB-id lookup (robust against missing artifacts that
+          // would shift positional indices). Fall back to artifactIndex
+          // for older segments that predate the artifactId field.
+          let art: Artifact | undefined;
+          if (typeof seg.artifactId === "string" && seg.artifactId) {
+            art = artifactById.get(seg.artifactId);
+          }
+          if (!art && typeof seg.artifactIndex === "number") {
+            const candidate = sortedArtifacts[seg.artifactIndex];
+            // Validate the type matches to prevent wrong-artifact assignment
+            // when a prior artifact failed to persist (causing index shift).
+            if (candidate && candidate.type === seg.artifactType) {
+              art = candidate;
+            }
+          }
+          if (art) {
+            rebuilt.push({
+              kind: "artifact",
+              artifact: {
+                type: art.type,
+                payload: art.payload as unknown as ArtifactView["payload"],
+              },
+            });
+          }
         }
       }
       if (rebuilt.length > 0) {
@@ -905,11 +941,15 @@ function MessageRow({
   index,
   streaming = false,
   isLast = false,
+  sessionId,
+  dataSourceIds,
 }: {
   message: ChatMessage;
   index: number;
   streaming?: boolean;
   isLast?: boolean;
+  sessionId?: string;
+  dataSourceIds?: string[];
 }) {
   const isUser = message.role === "user";
   const num = String(index + 1).padStart(2, "0");
@@ -950,7 +990,14 @@ function MessageRow({
               return <ThinkingProcess key={i} items={group.items} />;
             }
             if (group.type === "artifact") {
-              return <ArtifactRenderer key={i} artifact={group.item.artifact} />;
+              return (
+                <ArtifactRenderer
+                  key={i}
+                  artifact={group.item.artifact}
+                  sessionId={sessionId}
+                  dataSourceIds={dataSourceIds}
+                />
+              );
             }
             if (group.type === "tool") {
               return (
@@ -1012,7 +1059,12 @@ function MessageRow({
           {artifacts.length > 0 && (
             <div className="mt-3 ml-7 space-y-3">
               {artifacts.map((artifact, i) => (
-                <ArtifactRenderer key={i} artifact={artifact} />
+                <ArtifactRenderer
+                  key={i}
+                  artifact={artifact}
+                  sessionId={sessionId}
+                  dataSourceIds={dataSourceIds}
+                />
               ))}
             </div>
           )}
@@ -1203,7 +1255,15 @@ function ThinkingProcess({
     Streaming items (tool / artifact / text in arrival order)
     ============================================================ */
 
-function StreamingItemsView({ items }: { items: PendingItem[] }) {
+function StreamingItemsView({
+  items,
+  sessionId,
+  dataSourceIds,
+}: {
+  items: PendingItem[];
+  sessionId?: string;
+  dataSourceIds?: string[];
+}) {
   return (
     <div className="animate-fade-up space-y-4">
       <div className="mb-2 flex items-center gap-3">
@@ -1264,7 +1324,14 @@ function StreamingItemsView({ items }: { items: PendingItem[] }) {
             );
           }
           if (item.kind === "artifact") {
-            return <ArtifactRenderer key={i} artifact={item.artifact} />;
+            return (
+              <ArtifactRenderer
+                key={i}
+                artifact={item.artifact}
+                sessionId={sessionId}
+                dataSourceIds={dataSourceIds}
+              />
+            );
           }
           // text — render Markdown live so headings/lists/tables/code update
           // incrementally as tokens stream in, not only after the turn ends.

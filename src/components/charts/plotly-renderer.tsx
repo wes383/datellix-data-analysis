@@ -39,10 +39,19 @@ interface PlotlyRendererProps {
   /** Plotly figure JSON: { data: [...], layout: {...}, config?: {...} } */
   figure: Record<string, unknown>;
   title?: string;
+  /** Optional chart height override (in px). Defaults to 420. Used by the
+   *  library card's compact preview to render a smaller chart that fits
+   *  inside the card. */
+  height?: number;
+  /** When true, hides the in-chart Download PNG and Fullscreen action
+   *  buttons (used in library list/detail pages where the page-level chrome
+   *  provides its own download button instead). Session/chat view keeps
+   *  the default (false) so users can still fullscreen / download inline. */
+  hideControls?: boolean;
 }
 
 /** Default chart height inside the chat card. */
-const CHART_HEIGHT = 420;
+const DEFAULT_CHART_HEIGHT = 420;
 /**
  * Plotly needs an explicit width to draw the plot area correctly. We size the
  * inline chart to the artifact card and let the inner SVG auto-fit via
@@ -56,7 +65,8 @@ const CHART_HEIGHT = 420;
 const TOP_MARGIN_WITH_TITLE = 80;
 const TOP_MARGIN_NO_TITLE = 30;
 
-export function PlotlyRenderer({ figure, title }: PlotlyRendererProps) {
+export function PlotlyRenderer({ figure, title, height, hideControls }: PlotlyRendererProps) {
+  const chartHeight = height ?? DEFAULT_CHART_HEIGHT;
   const [hasMounted, setHasMounted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   // Ref to the inline Plot wrapper div. Plotly renders the graph DOM inside
@@ -105,7 +115,7 @@ export function PlotlyRenderer({ figure, title }: PlotlyRendererProps) {
         format: "png",
         filename,
         width: inlineGraphRef.current?.clientWidth ?? plotlyDivRef.current.clientWidth ?? 800,
-        height: CHART_HEIGHT,
+        height: chartHeight,
         scale: 2,
       });
     } catch (err) {
@@ -152,7 +162,7 @@ export function PlotlyRenderer({ figure, title }: PlotlyRendererProps) {
     };
   };
 
-  const inlineLayout = buildLayout(CHART_HEIGHT, false);
+  const inlineLayout = buildLayout(chartHeight, false);
   const fullscreenLayout = buildLayout(0, true);
 
   return (
@@ -163,30 +173,34 @@ export function PlotlyRenderer({ figure, title }: PlotlyRendererProps) {
           very tall charts from dominating the chat without squeezing the
           drawing area to the left. */}
       <div className="relative">
-        {/* Action buttons: Download PNG + Fullscreen */}
-        <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
-          <button
-            type="button"
-            onClick={handleDownload}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background/80 text-muted-foreground backdrop-blur-sm transition-colors hover:bg-background hover:text-foreground"
-            aria-label="Download chart as PNG"
-            title="Download PNG"
-          >
-            <Download className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setIsFullscreen(true)}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background/80 text-muted-foreground backdrop-blur-sm transition-colors hover:bg-background hover:text-foreground"
-            aria-label="Open chart in fullscreen"
-            title="Fullscreen"
-          >
-            <Maximize2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        {/* Action buttons: Download PNG + Fullscreen (hidden in library
+            contexts where hideControls is set — the page chrome provides
+            its own download button there). */}
+        {!hideControls && (
+          <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleDownload}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background/80 text-muted-foreground backdrop-blur-sm transition-colors hover:bg-background hover:text-foreground"
+              aria-label="Download chart as PNG"
+              title="Download PNG"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsFullscreen(true)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background/80 text-muted-foreground backdrop-blur-sm transition-colors hover:bg-background hover:text-foreground"
+              aria-label="Open chart in fullscreen"
+              title="Fullscreen"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
 
         {title && (
-          <p className="mb-3 pr-20 font-display text-sm font-medium tracking-tight text-foreground">
+          <p className={`mb-3 font-display text-sm font-medium tracking-tight text-foreground ${hideControls ? "" : "pr-20"}`}>
             {title}
           </p>
         )}
@@ -202,7 +216,7 @@ export function PlotlyRenderer({ figure, title }: PlotlyRendererProps) {
             data={data}
             layout={inlineLayout}
             config={{ responsive: true, displayModeBar: false }}
-            style={{ width: "100%", height: CHART_HEIGHT }}
+            style={{ width: "100%", height: chartHeight }}
             useResizeHandler
             onInitialized={(figure, graphDiv) => {
               plotlyDivRef.current = graphDiv;

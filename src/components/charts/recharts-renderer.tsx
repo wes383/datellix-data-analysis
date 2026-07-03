@@ -26,6 +26,10 @@ import type { ChartPayload } from "@/lib/agent/state";
 
 interface RechartsRendererProps {
   spec: ChartPayload;
+  /** Optional chart height override (in px). Defaults to 320 for pie, 300
+   *  for other chart types. Used by the library card's compact preview to
+   *  render a smaller chart that fits inside the card. */
+  height?: number;
 }
 
 // Color palette for series
@@ -102,7 +106,7 @@ const TOOLTIP_STYLE = {
  * (e.g. ArtifactRenderer) can capture a PNG via `html-to-image`'s `toPng`.
  */
 export const RechartsRenderer = forwardRef<HTMLDivElement, RechartsRendererProps>(
-  function RechartsRenderer({ spec }, ref) {
+  function RechartsRenderer({ spec, height }, ref) {
     const { chartType, data, xKey, yKeys, title, groupKey, uiConfig } = spec;
 
     if (!data || data.length === 0 || !xKey || yKeys.length === 0) {
@@ -113,7 +117,7 @@ export const RechartsRenderer = forwardRef<HTMLDivElement, RechartsRendererProps
       );
     }
 
-    const containerHeight = chartType === "pie" ? 320 : 300;
+    const containerHeight = height ?? (chartType === "pie" ? 320 : 300);
 
     return (
       <div className="w-full" ref={ref}>
