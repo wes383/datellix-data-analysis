@@ -55,7 +55,7 @@ export default async function SettingsPage() {
             Settings
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Configure your own LLM provider and file storage, or use the project defaults. Credentials are encrypted at rest (pgcrypto AES-256).
+            Configure your own LLM provider and file storage, or use the project defaults. Credentials are encrypted at rest (pgcrypto AES-256). Note: project defaults may run out of quota and are not guaranteed to be available.
           </p>
         </div>
 

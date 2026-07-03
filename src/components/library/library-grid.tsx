@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronRight, Database, LayoutGrid, Loader2, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Database, LayoutGrid, Loader2, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ChartViewer } from "@/components/library/chart-viewer";
 
 export interface LibraryChartDataSource {
@@ -60,6 +61,9 @@ const TYPE_SHORT: Record<string, string> = {
   file: "File",
 };
 
+/** Number of charts shown per page in the grid. */
+const PAGE_SIZE = 8;
+
 /**
  * Client-side grid of saved charts with a left data-source filter sidebar.
  *
@@ -81,6 +85,12 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
   // users can still see which source is active via the header chip and can
   // clear it via the header's "All" link.
   const [filterCollapsed, setFilterCollapsed] = useState(false);
+  // Search state. `searchOpen` toggles whether the search input is shown;
+  // clicking the search button expands it into a text field.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  // Pagination state — 1-indexed current page.
+  const [currentPage, setCurrentPage] = useState(1);
 
   async function handleDelete(
     e: React.MouseEvent,
@@ -115,13 +125,39 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
     });
   }
 
-  // Apply the active filter (if any) — a chart matches if any of its bound
-  // data sources equals the active source id.
-  const filteredCharts = activeSourceId
-    ? charts.filter((c) =>
+  // Apply the active data-source filter AND the title search query together.
+  // A chart matches if (no source filter OR it's bound to the active source)
+  // AND (no query OR its title contains the query, case-insensitive).
+  const filteredCharts = useMemo(() => {
+    let result = charts;
+    if (activeSourceId) {
+      result = result.filter((c) =>
         c.data_sources.some((ds) => ds.id === activeSourceId),
-      )
-    : charts;
+      );
+    }
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      result = result.filter((c) => c.title.toLowerCase().includes(q));
+    }
+    return result;
+  }, [charts, activeSourceId, searchQuery]);
+
+  // Pagination math. `safePage` guards against the current page exceeding the
+  // new total after filters shrink the result set (the effect below resets it,
+  // but this keeps the in-between render correct).
+  const totalPages = Math.max(1, Math.ceil(filteredCharts.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * PAGE_SIZE;
+  const pageCharts = filteredCharts.slice(
+    startIndex,
+    startIndex + PAGE_SIZE,
+  );
+
+  // Reset to the first page whenever the filters change so the user always
+  // sees results instead of landing on a now-empty page.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeSourceId, searchQuery]);
 
   if (charts.length === 0) {
     return (
@@ -239,89 +275,172 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
         </aside>
       )}
 
-      {/* Right: chart grid (filtered) */}
+      {/* Right: chart grid (filtered + paginated) */}
       <div className="min-w-0 flex-1">
-        {activeSourceId && filteredCharts.length === 0 ? (
+        {/* Toolbar: search button in the top-right. Clicking it expands the
+            button into a text input for filtering charts by title. */}
+        <div className="mb-4 flex items-center justify-end">
+          {searchOpen ? (
+            <div className="relative w-full max-w-xs">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                autoFocus
+                type="text"
+                placeholder="Search by title..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-9 pl-9 pr-9"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  setSearchOpen(false);
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                aria-label="Close search"
+                title="Close search"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setSearchOpen(true)}
+              aria-label="Search charts"
+              title="Search by title"
+            >
+              <Search className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+
+        {filteredCharts.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16 text-center">
             <p className="text-sm text-muted-foreground">
-              No charts bound to this data source.
+              {searchQuery.trim()
+                ? "No charts match your search."
+                : "No charts bound to this data source."}
             </p>
             <Button
               variant="outline"
               className="mt-4"
-              onClick={() => setActiveSourceId(null)}
+              onClick={() => {
+                setActiveSourceId(null);
+                setSearchQuery("");
+              }}
             >
               Show all charts
             </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-2">
-            {filteredCharts.map((chart) => {
-              const isDeleting = deletingId === chart.id;
-              return (
-                <Link
-                  key={chart.id}
-                  href={`/library/${chart.id}`}
-                  className="group flex flex-col overflow-hidden rounded-lg border border-border bg-card transition-colors hover:border-primary/50 hover:shadow-sm"
-                >
-                  {/* Mini preview */}
-                  <div className="border-b border-border bg-muted/20 px-2 pt-2">
-                    <div className="h-[280px] overflow-hidden">
-                      <ChartViewer
-                        chartId={chart.id}
-                        spec={chart.spec}
-                        renderer={chart.renderer}
-                        sqlText={chart.sql_text}
-                        compact
-                      />
-                    </div>
-                  </div>
-
-                  {/* Metadata */}
-                  <div className="flex flex-1 flex-col gap-2 p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="truncate font-display text-sm font-medium tracking-tight text-foreground">
-                        {chart.title}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={(e) => handleDelete(e, chart)}
-                        disabled={isDeleting}
-                        className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus:opacity-100 group-hover:opacity-100 disabled:opacity-50"
-                        aria-label="Delete chart"
-                        title="Delete"
-                      >
-                        {isDeleting ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-3.5 w-3.5" />
-                        )}
-                      </button>
+          <>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-2">
+              {pageCharts.map((chart) => {
+                const isDeleting = deletingId === chart.id;
+                return (
+                  <Link
+                    key={chart.id}
+                    href={`/library/${chart.id}`}
+                    className="group flex flex-col overflow-hidden rounded-lg border border-border bg-card transition-colors hover:border-primary/50 hover:shadow-sm"
+                  >
+                    {/* Mini preview */}
+                    <div className="border-b border-border bg-muted/20 px-2 pt-2">
+                      <div className="h-[280px] overflow-hidden">
+                        <ChartViewer
+                          chartId={chart.id}
+                          spec={chart.spec}
+                          renderer={chart.renderer}
+                          sqlText={chart.sql_text}
+                          compact
+                        />
+                      </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="inline-flex items-center rounded border border-border bg-background/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                        {chart.renderer}
-                      </span>
-                      {chart.data_sources.map((ds) => (
-                        <span
-                          key={ds.id}
-                          className="inline-flex items-center rounded border border-border bg-background/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
-                          title={`${TYPE_LABELS[ds.type] ?? ds.type}: ${ds.name}`}
+                    {/* Metadata */}
+                    <div className="flex flex-1 flex-col gap-2 p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="truncate font-display text-sm font-medium tracking-tight text-foreground">
+                          {chart.title}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={(e) => handleDelete(e, chart)}
+                          disabled={isDeleting}
+                          className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus:opacity-100 group-hover:opacity-100 disabled:opacity-50"
+                          aria-label="Delete chart"
+                          title="Delete"
                         >
-                          {ds.name}
-                        </span>
-                      ))}
-                    </div>
+                          {isDeleting ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      </div>
 
-                    <p className="mt-auto font-mono text-[10px] text-muted-foreground" suppressHydrationWarning>
-                      Updated {new Date(chart.updated_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="inline-flex items-center rounded border border-border bg-background/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                          {chart.renderer}
+                        </span>
+                        {chart.data_sources.map((ds) => (
+                          <span
+                            key={ds.id}
+                            className="inline-flex items-center rounded border border-border bg-background/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+                            title={`${TYPE_LABELS[ds.type] ?? ds.type}: ${ds.name}`}
+                          >
+                            {ds.name}
+                          </span>
+                        ))}
+                      </div>
+
+                      <p className="mt-auto font-mono text-[10px] text-muted-foreground" suppressHydrationWarning>
+                        Updated {new Date(chart.updated_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+
+            {/* Pagination — only shown when there's more than one page. */}
+            {totalPages > 1 && (
+              <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-muted-foreground">
+                  Showing {startIndex + 1}–
+                  {Math.min(startIndex + PAGE_SIZE, filteredCharts.length)} of{" "}
+                  {filteredCharts.length}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={safePage <= 1}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Previous
+                  </Button>
+                  <span className="text-sm text-muted-foreground">
+                    Page {safePage} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setCurrentPage((p) => Math.min(totalPages, p + 1))
+                    }
+                    disabled={safePage >= totalPages}
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

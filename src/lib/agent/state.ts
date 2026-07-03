@@ -29,8 +29,23 @@ export interface Artifact {
 }
 
 export interface ChartPayload {
-  /** Recharts spec: { chartType, data, xKey, yKeys, title } */
-  chartType: "bar" | "line" | "area" | "pie" | "scatter";
+  /** Recharts spec: { chartType, data, xKey, yKeys, title }
+   *
+   *  Chart types: bar / line / area / pie / scatter (original 5) plus
+   *  radar (multi-axis comparison), radialBar (circular progress bars),
+   *  funnel (conversion stages), treemap (hierarchical area), composed
+   *  (bar + line mix on the same chart). */
+  chartType:
+    | "bar"
+    | "line"
+    | "area"
+    | "pie"
+    | "scatter"
+    | "radar"
+    | "radialBar"
+    | "funnel"
+    | "treemap"
+    | "composed";
   data: Record<string, unknown>[];
   xKey: string;
   yKeys: string[];

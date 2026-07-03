@@ -680,7 +680,17 @@ print(json.dumps(result, default=str))
  */
 export function buildChartPayload(
   chartSpec: {
-    chartType: "bar" | "line" | "area" | "pie" | "scatter";
+    chartType:
+      | "bar"
+      | "line"
+      | "area"
+      | "pie"
+      | "scatter"
+      | "radar"
+      | "radialBar"
+      | "funnel"
+      | "treemap"
+      | "composed";
     xKey: string;
     yKeys: string[];
     title?: string;
@@ -1178,12 +1188,15 @@ export async function createAgentTools(
         "Run a SELECT query and build a Recharts chart payload from the results. " +
         "Choose the chart type based on the data and the user's question: " +
         "bar (comparisons), line (trends over time), area (cumulative), pie (proportions), " +
-        "scatter (correlations). xKey and yKeys MUST be actual column names in the query result. " +
+        "scatter (correlations), radar (multi-axis comparison across categories), " +
+        "radialBar (circular progress / radial comparisons), funnel (conversion stages), " +
+        "treemap (hierarchical area proportions), composed (bar + line on the same chart). " +
+        "xKey and yKeys MUST be actual column names in the query result. " +
         "Returns the chart text and a rendered chart artifact.",
       schema: z.object({
         sql: z.string().describe("The read-only SELECT SQL whose results feed the chart."),
         chartType: z
-          .enum(["bar", "line", "area", "pie", "scatter"])
+          .enum(["bar", "line", "area", "pie", "scatter", "radar", "radialBar", "funnel", "treemap", "composed"])
           .describe("Chart type to render."),
         xKey: z.string().describe("Column name for the x-axis."),
         yKeys: z
@@ -1752,10 +1765,10 @@ print(figure_json)
     {
       name: "build_plotly_chart",
       description:
-        "Generate a complex Plotly chart (3D, geographic, large scatter, etc.) by running Python code in the sandbox. " +
+        "Generate a Plotly chart by running Python code in the sandbox. " +
         "Provide a SQL query to load data as `df`, then Python code that creates a plotly figure and assigns it to variable `fig`. " +
         "The plotly, plotly.express, and plotly.graph_objects libraries are available. " +
-        "Use this for visualizations that Recharts can't handle: 3D scatter/surface, choropleth maps, sankey, treemap, large datasets.",
+        "The chart type is entirely determined by the Python code (e.g. px.bar, px.scatter_3d, px.heatmap) — choose the appropriate plotly.express / graph_objects constructor for the user's request.",
       schema: z.object({
         sql: z.string().describe("Read-only SELECT to load data as DataFrame `df`."),
         pythonCode: z

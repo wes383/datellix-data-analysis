@@ -20,6 +20,18 @@ import {
   Tooltip,
   ResponsiveContainer,
   Label,
+  Radar,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  RadialBar,
+  RadialBarChart,
+  Funnel,
+  FunnelChart,
+  LabelList,
+  Treemap,
+  ComposedChart,
 } from "recharts";
 
 import type { ChartPayload } from "@/lib/agent/state";
@@ -464,6 +476,218 @@ function renderChart(
             fillOpacity={0.6}
           />
         </ScatterChart>
+      );
+    }
+
+    case "radar": {
+      // Radar / spider chart. xKey is the categorical dimension on the
+      // polar angle axis; each yKey becomes one polygon series.
+      const displayLegend =
+        uiConfig?.showLegend !== undefined ? uiConfig.showLegend : yKeys.length > 1;
+      return (
+        <RadarChart data={data} outerRadius="75%">
+          <PolarGrid />
+          <PolarAngleAxis dataKey={xKey} tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+          <PolarRadiusAxis tick={{ fontSize: 10, fill: "hsl(0 0% 45%)" }} tickFormatter={formatCompact} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={TOOLTIP_FORMATTER} />
+          {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
+          {yKeys.map((key, idx) => (
+            <Radar
+              key={key}
+              name={key}
+              dataKey={key}
+              stroke={activeColors[idx % activeColors.length]}
+              fill={activeColors[idx % activeColors.length]}
+              fillOpacity={0.4}
+            />
+          ))}
+        </RadarChart>
+      );
+    }
+
+    case "radialBar": {
+      // Radial bar chart. Each yKey becomes a concentric ring; the xKey
+      // value (typically a single label) is shown via the legend.
+      const displayLegend =
+        uiConfig?.showLegend !== undefined ? uiConfig.showLegend : yKeys.length > 1;
+      return (
+        <RadialBarChart
+          data={data}
+          innerRadius="20%"
+          outerRadius="90%"
+          startAngle={90}
+          endAngle={-270}
+        >
+          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={TOOLTIP_FORMATTER} />
+          {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
+          <RadialBar
+            background
+            dataKey={yKeys[0]}
+            cornerRadius={6}
+          >
+            {data.map((_, idx) => (
+              <Cell key={idx} fill={activeColors[idx % activeColors.length]} />
+            ))}
+            <LabelList
+              dataKey={xKey}
+              position="insideEnd"
+              fill="hsl(0 0% 100%)"
+              fontSize={11}
+            />
+          </RadialBar>
+        </RadialBarChart>
+      );
+    }
+
+    case "funnel": {
+      // Funnel chart. xKey = stage name, yKeys[0] = value at that stage.
+      // Recharts Funnel expects data sorted in descending order; if the SQL
+      // didn't pre-sort we leave it as-is (still renders, just not strictly
+      // funnel-shaped).
+      const funnelData = data.map((row) => ({
+        name: String(row[xKey] ?? ""),
+        value: Number(row[yKeys[0]] ?? 0),
+        fill: activeColors[0],
+      }));
+      return (
+        <FunnelChart>
+          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={TOOLTIP_FORMATTER} />
+          <Funnel
+            data={funnelData}
+            dataKey="value"
+            isAnimationActive
+          >
+            <LabelList
+              dataKey="name"
+              position="right"
+              fill="hsl(0 0% 25%)"
+              stroke="none"
+              fontSize={12}
+            />
+            {funnelData.map((_, idx) => (
+              <Cell key={idx} fill={activeColors[idx % activeColors.length]} />
+            ))}
+          </Funnel>
+        </FunnelChart>
+      );
+    }
+
+    case "treemap": {
+      // Treemap. xKey = label, yKeys[0] = area value. Each rectangle is
+      // colored from the palette by index. Recharts Treemap supports nested
+      // data via the `children` field, but for the simple flat case we map
+      // the rows to top-level rectangles.
+      const treeData = data.map((row, idx) => ({
+        name: String(row[xKey] ?? ""),
+        size: Number(row[yKeys[0]] ?? 0),
+        fill: activeColors[idx % activeColors.length],
+      }));
+      return (
+        <Treemap
+          data={treeData}
+          dataKey="size"
+          stroke="hsl(0 0% 100%)"
+          content={(props: unknown) => {
+            const p = props as {
+              x?: number;
+              y?: number;
+              width?: number;
+              height?: number;
+              payload?: { fill?: string };
+              name?: string;
+            };
+            const px = typeof p.x === "number" ? p.x : 0;
+            const py = typeof p.y === "number" ? p.y : 0;
+            const pw = typeof p.width === "number" ? p.width : 0;
+            const ph = typeof p.height === "number" ? p.height : 0;
+            // Only draw the label if the rectangle is large enough to fit it.
+            const showLabel = pw > 60 && ph > 24;
+            return (
+              <g>
+                <rect
+                  x={px}
+                  y={py}
+                  width={pw}
+                  height={ph}
+                  fill={p.payload?.fill ?? activeColors[0]}
+                  stroke="hsl(0 0% 100%)"
+                  strokeWidth={1}
+                />
+                {showLabel && (
+                  <text
+                    x={px + pw / 2}
+                    y={py + ph / 2}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fill="hsl(0 0% 100%)"
+                    fontSize={12}
+                    fontWeight={500}
+                  >
+                    {p.name}
+                  </text>
+                )}
+              </g>
+            );
+          }}
+        >
+          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={TOOLTIP_FORMATTER} />
+        </Treemap>
+      );
+    }
+
+    case "composed": {
+      // Composed chart — bar + line on the same chart. The first yKey is
+      // rendered as bars, subsequent yKeys as lines (the common "value +
+      // trend" combination). Falls back to all-bars if only one yKey.
+      const displayLegend =
+        uiConfig?.showLegend !== undefined ? uiConfig.showLegend : yKeys.length > 1;
+      const chartMargin = {
+        top: 8,
+        right: 16,
+        left: uiConfig?.yAxisLabel ? 20 : 8,
+        bottom: uiConfig?.xAxisLabel ? 20 : 8,
+      };
+      const yAxisProps = { ...YAXIS_PROPS, width: uiConfig?.yAxisLabel ? 72 : 56 };
+      const [barKey, ...lineKeys] = yKeys;
+      return (
+        <ComposedChart data={data} margin={chartMargin}>
+          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />}
+          <XAxis
+            dataKey={xKey}
+            tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }}
+            tickLine={false}
+            axisLine={{ stroke: "hsl(0 0% 89.8%)" }}
+          >
+            {uiConfig?.xAxisLabel && (
+              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+            )}
+          </XAxis>
+          <YAxis {...yAxisProps}>
+            {uiConfig?.yAxisLabel && (
+              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+            )}
+          </YAxis>
+          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={TOOLTIP_FORMATTER} />
+          {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
+          {barKey && (
+            <Bar
+              dataKey={barKey}
+              fill={activeColors[0]}
+              radius={[4, 4, 0, 0]}
+              barSize={uiConfig?.barSize}
+            />
+          )}
+          {lineKeys.map((key, idx) => (
+            <Line
+              key={key}
+              type={uiConfig?.lineType || "monotone"}
+              dataKey={key}
+              stroke={activeColors[(idx + 1) % activeColors.length]}
+              strokeWidth={2}
+              dot={uiConfig?.showDot !== false ? { r: 3, fill: activeColors[(idx + 1) % activeColors.length] } : false}
+            />
+          ))}
+        </ComposedChart>
       );
     }
 

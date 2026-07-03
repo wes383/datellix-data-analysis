@@ -50,6 +50,11 @@ const CHART_TYPE_OPTIONS = [
   { value: "area", label: "Area" },
   { value: "pie", label: "Pie" },
   { value: "scatter", label: "Scatter" },
+  { value: "radar", label: "Radar" },
+  { value: "radialBar", label: "Radial Bar" },
+  { value: "funnel", label: "Funnel" },
+  { value: "treemap", label: "Treemap" },
+  { value: "composed", label: "Composed" },
 ];
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
