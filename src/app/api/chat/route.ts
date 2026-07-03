@@ -536,11 +536,23 @@ export async function POST(req: NextRequest) {
                 artifactIndex,
               });
               // Persist artifact to the artifacts table.
-              await supabase.from("artifacts").insert({
-                session_id: sessionId,
-                type: artifact.type,
-                payload: artifact.payload as unknown as Record<string, unknown>,
-              });
+              const { error: artifactInsertError } = await supabase
+                .from("artifacts")
+                .insert({
+                  session_id: sessionId,
+                  type: artifact.type,
+                  payload: artifact.payload as unknown as Record<string, unknown>,
+                });
+              if (artifactInsertError) {
+                // Log so failures don't silently disappear on page refresh
+                // (e.g. CHECK constraint rejecting a new artifact type).
+                console.error(
+                  "[chat] failed to persist artifact:",
+                  artifactInsertError.message,
+                  "type:",
+                  artifact.type,
+                );
+              }
             }
           }
         }

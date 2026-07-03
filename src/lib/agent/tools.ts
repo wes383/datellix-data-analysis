@@ -1080,9 +1080,10 @@ export async function createAgentTools(
         // append ".csv" without worrying about path separators or unicode.
         const safeName =
           (filename || title || "query_results")
-            .replace(/[^a-zA-Z0-9_-]+/g, "_")
-            .replace(/^_+|_+$/g, "")
-            .slice(0, 80) || "query_results";
+            .replace(/[/\\:*?"<>|]+/g, "_")  // strip path separators and OS-reserved characters
+            .replace(/\.{2,}/g, ".")          // prevent path traversal via ".."
+            .trim()
+            .slice(0, 120) || "query_results";
         const filePayload: FilePayload = {
           filename: safeName,
           columns: results.columns,

@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useRef, useState } from "react";
+import { forwardRef, useEffect, useRef, useState } from "react";
 import { toPng } from "html-to-image";
 import { BarChart3, Code2, Download, FileText, FileDown, LineChart, Loader2, Table2 } from "lucide-react";
 import {
@@ -65,13 +65,108 @@ const ARTIFACT_META: Record<
 };
 
 /**
- * Renders an artifact (chart / table / code / summary) inside a bordered card.
+ * Multi-format download dropdown for table-like artifacts (table / file).
+ *
+ * Renders a compact Download icon button in the artifact header. Clicking it
+ * opens a small popover with three export options: Excel (.xlsx), CSV (.csv),
+ * and JSON (.json). The popover closes on outside click or Escape.
+ *
+ * Excel export uses a dynamic import of xlsx so it's only loaded on demand.
+ */
+function DownloadMenu({
+  columns,
+  rows,
+  baseName,
+}: {
+  columns: string[];
+  rows: unknown[][];
+  baseName: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  async function handleDownload(format: "xlsx" | "csv" | "json") {
+    if (exporting) return;
+    setOpen(false);
+    const safe = sanitizeFilename(baseName);
+    setExporting(true);
+    try {
+      if (format === "csv") {
+        downloadCsv(columns, rows, `${safe}.csv`);
+      } else if (format === "json") {
+        downloadJson(columns, rows, `${safe}.json`);
+      } else {
+        await downloadExcel(columns, rows, `${safe}.xlsx`);
+      }
+    } catch (err) {
+      console.error("[artifact] download failed:", err);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <div ref={containerRef} className="relative ml-auto">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={exporting}
+        className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+        aria-label="Download"
+        title="Download"
+      >
+        {exporting ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Download className="h-3.5 w-3.5" />
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 min-w-[140px] overflow-hidden rounded-md border border-border bg-white p-1 shadow-lg">
+          {([
+            { fmt: "xlsx" as const, label: "Excel (.xlsx)" },
+            { fmt: "csv" as const, label: "CSV (.csv)" },
+            { fmt: "json" as const, label: "JSON (.json)" },
+          ]).map((opt) => (
+            <button
+              key={opt.fmt}
+              type="button"
+              onClick={() => handleDownload(opt.fmt)}
+              className="flex w-full cursor-pointer items-center px-2.5 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent"
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Renders an artifact (chart / table / code / summary / file) inside a bordered card.
  * Used by the Chat component when streaming artifacts arrive from /api/chat.
  *
  * Exportable artifacts show a Download button in the header:
  *   - chart (recharts) / forecast → PNG via html-to-image
  *   - chart (plotly)              → PNG handled inside PlotlyRenderer
- *   - table                       → CSV download
+ *   - table / file                → multi-format dropdown (Excel / CSV / JSON)
  */
 export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
   const meta = ARTIFACT_META[artifact.type];
@@ -81,28 +176,36 @@ export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
 
-  /** Whether this artifact shows a header-level download button. */
-  const canExport =
-    artifact.type === "table" ||
-    artifact.type === "file" ||
+  // Table-like artifacts (table / file) show a multi-format download menu
+  // (Excel / CSV / JSON). Chart-like artifacts (chart non-plotly / forecast)
+  // show a single PNG download button.
+  const tableExport =
+    artifact.type === "table" || artifact.type === "file";
+  const pngExport =
     (artifact.type === "chart" &&
       (artifact.payload as ChartPayload).renderer !== "plotly") ||
     artifact.type === "forecast";
 
-  async function handleExport() {
+  // Extract columns / rows / base filename for table-like exports.
+  const tableData = tableExport
+    ? artifact.type === "table"
+      ? {
+          columns: (artifact.payload as TablePayload).columns,
+          rows: (artifact.payload as TablePayload).rows,
+          baseName: (artifact.payload as TablePayload).title ?? "table",
+        }
+      : {
+          columns: (artifact.payload as FilePayload).columns,
+          rows: (artifact.payload as FilePayload).rows,
+          baseName: (artifact.payload as FilePayload).filename,
+        }
+    : null;
+
+  async function handlePngExport() {
     if (exporting) return;
     setExporting(true);
     try {
-      if (artifact.type === "table") {
-        const payload = artifact.payload as TablePayload;
-        const filename = sanitizeFilename(payload.title ?? "table") + ".csv";
-        downloadCsv(payload.columns, payload.rows, filename);
-      } else if (artifact.type === "file") {
-        const payload = artifact.payload as FilePayload;
-        const filename = sanitizeFilename(payload.filename) + ".csv";
-        downloadCsv(payload.columns, payload.rows, filename);
-      } else if (chartContainerRef.current) {
-        // chart (recharts) + forecast both render via RechartsRenderer
+      if (chartContainerRef.current) {
         const payload = artifact.payload as ChartPayload | ForecastPayload;
         const title =
           (payload as ChartPayload).title ??
@@ -131,22 +234,21 @@ export function ArtifactRenderer({ artifact }: ArtifactRendererProps) {
           {meta.label}
           {artifact.node ? ` · ${artifact.node}` : ""}
         </span>
-        {canExport && (
+        {tableData && (
+          <DownloadMenu
+            columns={tableData.columns}
+            rows={tableData.rows}
+            baseName={tableData.baseName}
+          />
+        )}
+        {pngExport && (
           <button
             type="button"
-            onClick={handleExport}
+            onClick={handlePngExport}
             disabled={exporting}
             className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-            aria-label={
-              artifact.type === "table" || artifact.type === "file"
-                ? "Download CSV"
-                : "Download PNG"
-            }
-            title={
-              artifact.type === "table" || artifact.type === "file"
-                ? "Download CSV"
-                : "Download PNG"
-            }
+            aria-label="Download PNG"
+            title="Download PNG"
           >
             {exporting ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -503,4 +605,40 @@ function downloadCsv(columns: string[], rows: unknown[][], filename: string) {
   triggerDownload(url, filename);
   // Release the object URL after the download is dispatched.
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Build a JSON array of row-objects and trigger a browser download. */
+function downloadJson(columns: string[], rows: unknown[][], filename: string) {
+  const data = rows.map((row) => {
+    const obj: Record<string, unknown> = {};
+    columns.forEach((col, i) => {
+      obj[col] = row[i];
+    });
+    return obj;
+  });
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: "application/json;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  triggerDownload(url, filename);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Build an .xlsx file from table data and trigger a browser download.
+ *  Uses SheetJS (xlsx) for proper Excel format support. */
+async function downloadExcel(columns: string[], rows: unknown[][], filename: string) {
+  // Dynamic import — xlsx is only loaded when the user actually exports
+  // to Excel, keeping the initial bundle smaller.
+  const XLSX = await import("xlsx");
+  // Map rows to objects keyed by column name so the sheet has headers.
+  const data = rows.map((row) => {
+    const obj: Record<string, unknown> = {};
+    columns.forEach((col, i) => {
+      obj[col] = row[i];
+    });
+    return obj;
+  });
+  const ws = XLSX.utils.json_to_sheet(data, { header: columns });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  XLSX.writeFile(wb, filename);
 }
