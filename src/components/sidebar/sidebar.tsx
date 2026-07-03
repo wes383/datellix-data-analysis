@@ -3,7 +3,7 @@
 import { useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Plus, Trash2, LogOut, Database, BarChart3 } from "lucide-react";
+import { Plus, Trash2, LogOut, Database, BarChart3, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { deleteSession, signOut } from "@/app/actions/sessions";
 import type { Session } from "@/lib/db/schema";
@@ -88,6 +88,17 @@ export function Sidebar({ sessions, userEmail }: SidebarProps) {
         >
           <BarChart3 className="h-3.5 w-3.5" />
           Usage
+        </Link>
+        <Link
+          href="/settings"
+          className={`mt-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors ${
+            pathname.startsWith("/settings")
+              ? "bg-accent font-medium text-foreground"
+              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+          }`}
+        >
+          <Settings className="h-3.5 w-3.5" />
+          Settings
         </Link>
       </div>
 

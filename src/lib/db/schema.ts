@@ -32,8 +32,12 @@ export interface PgConfig {
 
 /** File-based data source config */
 export interface FileConfig {
-  /** Vercel Blob URL */
-  blobUrl: string;
+  /** Vercel Blob URL (present when storageBackend is vercel-blob) */
+  blobUrl?: string;
+  /** S3 object key (present when storageBackend is s3) */
+  s3Key?: string;
+  /** S3 bucket name (present when storageBackend is s3) */
+  s3Bucket?: string;
   filename: string;
   /** csv | excel | parquet */
   format: string;
@@ -61,16 +65,20 @@ export interface BigQueryConfig {
   dataset?: string;
 }
 
-/** DuckDB file data source config. The file is uploaded to Vercel Blob. */
+/** DuckDB file data source config. The file is uploaded to Vercel Blob or S3. */
 export interface DuckdbFileConfig {
-  blobUrl: string;
+  blobUrl?: string;
+  s3Key?: string;
+  s3Bucket?: string;
   filename: string;
   size: number;
 }
 
-/** SQLite file data source config. The file is uploaded to Vercel Blob. */
+/** SQLite file data source config. The file is uploaded to Vercel Blob or S3. */
 export interface SqliteFileConfig {
-  blobUrl: string;
+  blobUrl?: string;
+  s3Key?: string;
+  s3Bucket?: string;
   filename: string;
   size: number;
 }
@@ -122,4 +130,59 @@ export interface UsageLog {
   cost: number;
   source: string | null;
   created_at: string;
+}
+
+// ============================================================
+// User settings (per-user LLM + storage configuration)
+// ============================================================
+
+/** User-configurable LLM provider config (chat model only). Encrypted at rest.
+ *
+ *  `models` is an array so one API config (provider + apiKey + baseURL) can
+ *  serve multiple models — the user switches between them in the chat UI.
+ *  The first entry is the default used when no selection is stored.
+ *
+ *  Backward compat: older configs stored a single `model: string`. The
+ *  `normalizeLlmConfig` helper converts old shape → new shape at load time. */
+export interface LlmConfig {
+  provider: "openai" | "anthropic" | "glm" | "openai-compat";
+  apiKey: string;
+  /** One or more model names sharing the same provider/apiKey/baseURL. */
+  models: string[];
+  /** @deprecated kept for backward compat with old encrypted configs. */
+  model?: string;
+  /** Required for openai-compat; optional for glm (defaults to Zhipu endpoint) */
+  baseURL?: string;
+  /** Only for openai-compat (default 0) */
+  temperature?: number;
+}
+
+/** Convert an old-shape LlmConfig ({ model: "gpt-4o" }) to the new shape
+ *  ({ models: ["gpt-4o"] }). Safe to call on already-normalized configs. */
+export function normalizeLlmConfig(config: LlmConfig): LlmConfig {
+  if (config.models && config.models.length > 0) {
+    return config;
+  }
+  if (config.model) {
+    return { ...config, models: [config.model], model: undefined };
+  }
+  return { ...config, models: [] };
+}
+
+/** User-configurable file storage config. Encrypted at rest.
+ *  Only S3-compatible is supported for custom storage. When null, the
+ *  project default (env-based Vercel Blob) is used. */
+export interface StorageConfig {
+  backend: "s3";
+  endpoint?: string;
+  region?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  bucket?: string;
+}
+
+/** user_settings row (decrypted form; secrets masked before sending to client) */
+export interface UserSettings {
+  llmConfig: LlmConfig | null;
+  storageConfig: StorageConfig | null;
 }

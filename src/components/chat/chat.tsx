@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowUp, ChevronRight, Database, Loader2, Plus, Wrench, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { toast } from "sonner";
 import type { Message } from "@/lib/db/schema";
 import { createSession } from "@/app/actions/sessions";
@@ -42,6 +43,10 @@ interface ChatProps {
   initialArtifacts?: Artifact[];
   dataSource?: DataSourceProp;
   existingSources?: ExistingSource[];
+  /** Models available for switching in the chat composer. Populated from
+   *  the user's custom LLM config. Empty when using project default or
+   *  when only one model is configured (nothing to switch). */
+  availableModels?: string[];
 }
 
 /* DB Artifact shape (payload is Record<string, unknown>).
@@ -99,12 +104,44 @@ type PendingItem =
   | { kind: "thinking"; content: string }
   | { kind: "text"; content: string };
 
+// localStorage key prefix for per-session composer drafts.
+// Keyed by sessionId so each session keeps its own draft across refreshes.
+const DRAFT_KEY_PREFIX = "datellix:draft:";
+
+function draftKey(sessionId: string): string {
+  return `${DRAFT_KEY_PREFIX}${sessionId}`;
+}
+
+function readDraft(sessionId: string): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.localStorage.getItem(draftKey(sessionId)) ?? "";
+  } catch {
+    // localStorage may be unavailable (private mode, disabled) — silently skip.
+    return "";
+  }
+}
+
+function writeDraft(sessionId: string, value: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (value) {
+      window.localStorage.setItem(draftKey(sessionId), value);
+    } else {
+      window.localStorage.removeItem(draftKey(sessionId));
+    }
+  } catch {
+    // Ignore write failures — drafts are a best-effort convenience.
+  }
+}
+
 export function Chat({
   sessionId,
   initialMessages,
   initialArtifacts = [],
   dataSource = null,
   existingSources = [],
+  availableModels = [],
 }: ChatProps) {
   const router = useRouter();
   // `sessionId` prop is "new" for a pending session (no DB row yet). The
@@ -125,6 +162,72 @@ export function Chat({
   const [removingFileId, setRemovingFileId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Debounce timer for writing the draft to localStorage — avoids a write
+  // on every keystroke.
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ---- Model selector state ----
+  // The currently selected model. Persisted per-session in localStorage so
+  // the user's choice survives page refresh. Defaults to availableModels[0].
+  const [selectedModel, setSelectedModel] = useState<string>("");
+  const showModelSelector = availableModels.length > 1;
+
+  useEffect(() => {
+    if (!showModelSelector) {
+      setSelectedModel("");
+      return;
+    }
+    // Restore from localStorage, falling back to the first model.
+    const stored = (() => {
+      try {
+        return localStorage.getItem(`datellix:model:${sessionId}`) ?? "";
+      } catch {
+        return "";
+      }
+    })();
+    // If the stored model is no longer in the list (user edited settings),
+    // fall back to the first available.
+    if (stored && availableModels.includes(stored)) {
+      setSelectedModel(stored);
+    } else {
+      setSelectedModel(availableModels[0] ?? "");
+    }
+  }, [sessionId, availableModels, showModelSelector]);
+
+  function handleModelChange(model: string) {
+    setSelectedModel(model);
+    try {
+      localStorage.setItem(`datellix:model:${sessionId}`, model);
+    } catch {
+      // Ignore — best-effort persistence.
+    }
+  }
+
+  // Restore the draft for this session on mount / sessionId change.
+  // Done in an effect (not a lazy useState initializer) so SSR and the first
+  // client render agree on the textarea value, avoiding hydration mismatch.
+  useEffect(() => {
+    const draft = readDraft(sessionId);
+    if (draft) {
+      setInput(draft);
+      // Sync textarea height to restored content on the next frame.
+      requestAnimationFrame(() => {
+        const el = inputRef.current;
+        if (el) {
+          el.style.height = "auto";
+          el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+        }
+      });
+    }
+  }, [sessionId]);
+
+  // Persist input changes to localStorage with a small debounce so we don't
+  // hit the API on every keystroke. Cleared on submit / unmount.
+  useEffect(() => {
+    return () => {
+      if (draftTimer.current) clearTimeout(draftTimer.current);
+    };
+  }, []);
 
   // Derived streaming text (concatenation of all text items, for final persist)
   const pendingAssistant = pendingItems
@@ -170,6 +273,8 @@ export function Chat({
     };
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
+    // Clear the saved draft — the message has been sent, no need to restore.
+    writeDraft(sessionId, "");
     setStreaming(true);
     setPendingItems([]);
 
@@ -177,7 +282,11 @@ export function Chat({
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: activeSessionId, message: text }),
+        body: JSON.stringify({
+          sessionId: activeSessionId,
+          message: text,
+          ...(selectedModel && { model: selectedModel }),
+        }),
       });
       if (!res.ok || !res.body) {
         const errBody = await res.text();
@@ -416,10 +525,17 @@ export function Chat({
               ref={inputRef}
               value={input}
               onChange={(e) => {
-                setInput(e.target.value);
+                const value = e.target.value;
+                setInput(value);
                 // Auto-resize: grow with content up to a max height, then scroll.
                 e.target.style.height = "auto";
                 e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
+                // Persist to localStorage (debounced) so a refresh restores
+                // the in-progress text instead of losing it.
+                if (draftTimer.current) clearTimeout(draftTimer.current);
+                draftTimer.current = setTimeout(() => {
+                  writeDraft(sessionId, value);
+                }, 300);
               }}
               onKeyDown={(e) => {
                 // Enter sends; Shift+Enter inserts a newline (default behavior).
@@ -435,6 +551,15 @@ export function Chat({
               rows={1}
               className="max-h-[200px] flex-1 resize-none border-0 bg-transparent px-0 py-1.5 font-sans text-sm shadow-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
             />
+            {showModelSelector && (
+              <Select
+                value={selectedModel}
+                onChange={handleModelChange}
+                variant="pill"
+                options={availableModels.map((m) => ({ value: m, label: m }))}
+                className="shrink-0"
+              />
+            )}
             <Button
               type="submit"
               size="icon"

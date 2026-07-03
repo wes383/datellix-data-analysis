@@ -283,8 +283,8 @@ export function SourceForm({
                   id="type"
                   value={type}
                   disabled={isEdit}
-                  onChange={(e) => {
-                    const next = e.target.value as DbType;
+                  onChange={(v) => {
+                    const next = v as DbType;
                     setType(next);
                     if (next === "pg" && form.port === "3306") {
                       update("port", "5432");
@@ -292,18 +292,19 @@ export function SourceForm({
                       update("port", "3306");
                     }
                   }}
-                >
-                  <option value="pg">PostgreSQL</option>
-                  <option value="mysql">MySQL</option>
-                  <option value="bigquery">BigQuery</option>
-                  <option value="duckdb">DuckDB file</option>
-                  <option value="sqlite">SQLite file</option>
-                  {/* file type only shown in edit mode for existing file sources;
-                      file data sources are created via chat upload, not this form. */}
-                  {isEdit && type === "file" && (
-                    <option value="file">File (CSV/Excel/Parquet)</option>
-                  )}
-                </Select>
+                  options={[
+                    { value: "pg", label: "PostgreSQL" },
+                    { value: "mysql", label: "MySQL" },
+                    { value: "bigquery", label: "BigQuery" },
+                    { value: "duckdb", label: "DuckDB file" },
+                    { value: "sqlite", label: "SQLite file" },
+                    // file type only shown in edit mode for existing file sources;
+                    // file data sources are created via chat upload, not this form.
+                    ...(isEdit && type === "file"
+                      ? [{ value: "file", label: "File (CSV/Excel/Parquet)" }]
+                      : []),
+                  ]}
+                />
                 {isEdit && (
                   <p className="font-mono text-[10px] text-muted-foreground">
                     The database type cannot be changed after creation.
@@ -410,13 +411,14 @@ export function SourceForm({
                     <Select
                       id="ssl"
                       value={form.ssl}
-                      onChange={(e) => update("ssl", e.target.value)}
-                    >
-                      <option value="require">require (recommended)</option>
-                      <option value="disable">disable</option>
-                      <option value="verify-ca">verify-ca</option>
-                      <option value="verify-full">verify-full</option>
-                    </Select>
+                      onChange={(v) => update("ssl", v)}
+                      options={[
+                        { value: "require", label: "require (recommended)" },
+                        { value: "disable", label: "disable" },
+                        { value: "verify-ca", label: "verify-ca" },
+                        { value: "verify-full", label: "verify-full" },
+                      ]}
+                    />
                   </div>
                 </>
               )}

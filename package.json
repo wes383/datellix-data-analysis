@@ -12,6 +12,7 @@
     "db:reset": "supabase db reset"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1078.0",
     "@daytona/sdk": "^0.192.0",
     "@google-cloud/bigquery": "^8.3.1",
     "@langchain/anthropic": "^1.5.1",

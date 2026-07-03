@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { streamAgent } from "@/lib/agent/graph";
+import { loadUserLlmConfig } from "@/lib/storage/resolver";
 import { logUsage } from "@/lib/usage";
 import {
   createSandbox,
@@ -151,9 +152,10 @@ export async function POST(req: NextRequest) {
   }
 
   // 2. Parse request
-  const { sessionId, message } = (await req.json()) as {
+  const { sessionId, message, model } = (await req.json()) as {
     sessionId?: string;
     message?: string;
+    model?: string;
   };
   if (!sessionId || !message) {
     return NextResponse.json({ error: "Missing sessionId or message" }, { status: 400 });
@@ -295,6 +297,7 @@ export async function POST(req: NextRequest) {
       };
 
       try {
+        const llmConfig = await loadUserLlmConfig(user.id);
         for await (const chunk of streamAgent({
           sessionId,
           question: message,
@@ -302,6 +305,8 @@ export async function POST(req: NextRequest) {
           dataSourceType,
           fileDataSourceIds,
           userId: user.id,
+          llmConfig,
+          model,
           getSandbox,
         })) {
           // streamMode: ["messages"] yields [mode, payload] tuples.

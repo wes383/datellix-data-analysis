@@ -6,6 +6,7 @@ import { createLLM } from "@/lib/agent/llm";
 import { retrieveSchema, retrieveSchemaMulti, type SchemaColumn } from "@/lib/agent/schema";
 import { createAgentTools, getDialectLabel, type AgentContext } from "@/lib/agent/tools";
 import type { SandboxProvider } from "@/lib/daytona/client";
+import type { LlmConfig } from "@/lib/db/schema";
 
 /**
  * ReAct agent graph — Phase 2 refactor
@@ -176,9 +177,13 @@ export async function* streamAgent(params: {
   dataSourceType: string;
   fileDataSourceIds: string[];
   userId: string;
+  llmConfig?: LlmConfig | null;
+  /** Override the model from the user's config (lets the user switch between
+   *  models in the chat UI). Ignored when llmConfig is null (env default). */
+  model?: string;
   getSandbox?: SandboxProvider;
 }) {
-  const { sessionId, question, dataSourceId, dataSourceType, fileDataSourceIds, userId, getSandbox } = params;
+  const { sessionId, question, dataSourceId, dataSourceType, fileDataSourceIds, userId, llmConfig, model, getSandbox } = params;
 
   const ctx: AgentContext = {
     sessionId,
@@ -214,7 +219,7 @@ export async function* streamAgent(params: {
   //    per-request. recursionLimit caps the ReAct loop (default 25 is plenty
   //    for query → fix → chart flows).
   const cp = await getCheckpointer();
-  const llm = createLLM();
+  const llm = createLLM(llmConfig, model);
   const systemPrompt = buildSystemPrompt({
     schemaContext: seedSchema,
     ctx,

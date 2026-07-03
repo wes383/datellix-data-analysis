@@ -4,7 +4,8 @@ import { BigQuery } from "@google-cloud/bigquery";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptConfig } from "@/lib/db/crypto";
 import { embedBatch, embedText } from "@/lib/llm/embeddings";
-import { runPython, SANDBOX_DATA_DIR } from "@/lib/daytona/client";
+import { runPython } from "@/lib/daytona/client";
+import { downloadStorageFile } from "@/lib/storage/resolver";
 import type {
   PgConfig,
   FileConfig,
@@ -123,24 +124,15 @@ print(json.dumps(result))
 /** Extract schema from a file data source using Daytona sandbox + DuckDB */
 async function extractFileSchema(
   sessionId: string,
-  blobUrl: string,
+  meta: Record<string, unknown>,
+  userId: string,
   filename: string,
   format: string,
 ): Promise<SchemaColumn[]> {
-  // Download file from Vercel Blob (private blobs require Authorization header)
-  const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
-  const fileResp = await fetch(blobUrl, {
-    headers: blobToken
-      ? { Authorization: `Bearer ${blobToken}` }
-      : undefined,
-  });
-  if (!fileResp.ok) {
-    throw new Error(`Failed to download file from Blob: ${fileResp.status}`);
-  }
-  const fileBuffer = Buffer.from(await fileResp.arrayBuffer());
-
-  const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
+  // Download file from the user's configured storage backend (S3 or Vercel Blob)
+  const staged = await downloadStorageFile(meta, userId, filename);
+  const fileBuffer = staged.buffer;
+  const remotePath = staged.remotePath;
 
   // Run DuckDB schema extraction with the file staged in the ephemeral sandbox
   const code = buildSchemaExtractionCode(remotePath, format);
@@ -338,18 +330,12 @@ async function extractBigQuerySchema(config: BigQueryConfig): Promise<SchemaColu
 async function extractDuckdbFileSchema(
   sessionId: string,
   config: DuckdbFileConfig,
+  meta: Record<string, unknown>,
+  userId: string,
 ): Promise<SchemaColumn[]> {
-  const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
-  // Download file from Blob
-  const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
-  const fileResp = await fetch(config.blobUrl, {
-    headers: blobToken ? { Authorization: `Bearer ${blobToken}` } : undefined,
-  });
-  if (!fileResp.ok) {
-    throw new Error(`Failed to download file from Blob: ${fileResp.status}`);
-  }
-  const fileBuffer = Buffer.from(await fileResp.arrayBuffer());
+  const staged = await downloadStorageFile(meta, userId, config.filename);
+  const fileBuffer = staged.buffer;
+  const remotePath = staged.remotePath;
   const code = `
 import duckdb, json, sys
 con = duckdb.connect("${remotePath}", read_only=True)
@@ -380,17 +366,12 @@ except Exception as e:
 async function extractSqliteFileSchema(
   sessionId: string,
   config: SqliteFileConfig,
+  meta: Record<string, unknown>,
+  userId: string,
 ): Promise<SchemaColumn[]> {
-  const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
-  const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
-  const fileResp = await fetch(config.blobUrl, {
-    headers: blobToken ? { Authorization: `Bearer ${blobToken}` } : undefined,
-  });
-  if (!fileResp.ok) {
-    throw new Error(`Failed to download file from Blob: ${fileResp.status}`);
-  }
-  const fileBuffer = Buffer.from(await fileResp.arrayBuffer());
+  const staged = await downloadStorageFile(meta, userId, config.filename);
+  const fileBuffer = staged.buffer;
+  const remotePath = staged.remotePath;
   const code = `
 import duckdb, json, sys
 con = duckdb.connect()
@@ -450,7 +431,8 @@ export async function indexDataSourceSchema(params: {
     const config = await decryptConfig<FileConfig>(configEncrypted);
     columns = await extractFileSchema(
       sessionId,
-      config.blobUrl,
+      meta ?? {},
+      userId,
       config.filename,
       config.format,
     );
@@ -468,13 +450,13 @@ export async function indexDataSourceSchema(params: {
       throw new Error("DuckDB file schema indexing requires a sessionId (for sandbox access)");
     }
     const config = await decryptConfig<DuckdbFileConfig>(configEncrypted);
-    columns = await extractDuckdbFileSchema(sessionId, config);
+    columns = await extractDuckdbFileSchema(sessionId, config, meta ?? {}, userId);
   } else if (type === "sqlite") {
     if (!sessionId) {
       throw new Error("SQLite file schema indexing requires a sessionId (for sandbox access)");
     }
     const config = await decryptConfig<SqliteFileConfig>(configEncrypted);
-    columns = await extractSqliteFileSchema(sessionId, config);
+    columns = await extractSqliteFileSchema(sessionId, config, meta ?? {}, userId);
   } else {
     throw new Error(`Schema indexing not supported for type: ${type}`);
   }

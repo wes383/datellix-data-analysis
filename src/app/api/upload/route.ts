@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { uploadFile, blobPath, fileHash } from "@/lib/blob/client";
+import { fileHash } from "@/lib/blob/client";
+import { uploadStorageFile } from "@/lib/storage/resolver";
 import { encryptConfig } from "@/lib/db/crypto";
 import { indexDataSourceSchema } from "@/lib/agent/schema";
 import type { FileConfig } from "@/lib/db/schema";
@@ -92,31 +93,43 @@ export async function POST(req: NextRequest) {
     .limit(1);
 
   let dataSourceId: string;
-  let blobUrl: string;
+  let blobUrl: string | undefined;
   let indexed: boolean;
   let indexError: string | undefined;
   let reused = false;
 
   if (existing && existing.length > 0) {
-    // Reuse the existing data_source — skip Blob upload and schema indexing.
+    // Reuse the existing data_source — skip upload and schema indexing.
     const existingDs = existing[0];
     dataSourceId = existingDs.id;
     const meta = (existingDs.meta ?? {}) as Record<string, unknown>;
-    blobUrl = typeof meta.blobUrl === "string" ? meta.blobUrl : "";
+    blobUrl = typeof meta.blobUrl === "string" ? meta.blobUrl : undefined;
     indexed = true; // already indexed when first created
     reused = true;
   } else {
-    // 3. New file: upload to Blob, create data_source, index schema.
-    const path = blobPath(user.id, sessionId, file.name);
-    blobUrl = await uploadFile(path, file);
+    // 3. New file: upload to storage (Vercel Blob or S3 per user config),
+    //    create data_source, index schema.
+    const storageInfo = await uploadStorageFile(user.id, sessionId, file.name, file);
+    blobUrl = storageInfo.blobUrl;
 
     const fileConfig: FileConfig = {
-      blobUrl,
+      ...(storageInfo.blobUrl && { blobUrl: storageInfo.blobUrl }),
+      ...(storageInfo.s3Key && { s3Key: storageInfo.s3Key, s3Bucket: storageInfo.s3Bucket }),
       filename: file.name,
       format,
       size: file.size,
     };
     const configEncrypted = await encryptConfig(fileConfig);
+
+    const meta: Record<string, unknown> = {
+      format,
+      size: file.size,
+      blobPath: storageInfo.blobPath,
+      fileHash: hash,
+      storageBackend: storageInfo.storageBackend,
+      ...(storageInfo.blobUrl && { blobUrl: storageInfo.blobUrl }),
+      ...(storageInfo.s3Key && { s3Key: storageInfo.s3Key, s3Bucket: storageInfo.s3Bucket }),
+    };
 
     const { data: dataSource, error: dsError } = await admin
       .from("data_sources")
@@ -125,7 +138,7 @@ export async function POST(req: NextRequest) {
         type: dsType,
         name: file.name,
         config_encrypted: configEncrypted,
-        meta: { format, size: file.size, blobPath: path, blobUrl, fileHash: hash },
+        meta,
       })
       .select("id")
       .single();
@@ -147,7 +160,7 @@ export async function POST(req: NextRequest) {
         type: dsType,
         configEncrypted,
         sessionId,
-        meta: { format, size: file.size },
+        meta,
       });
       indexed = true;
     } catch (err) {

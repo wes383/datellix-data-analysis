@@ -5,8 +5,9 @@ import { tool, type DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptConfig } from "@/lib/db/crypto";
-import { runPython, SANDBOX_DATA_DIR, type SandboxProvider } from "@/lib/daytona/client";
+import { runPython, type SandboxProvider } from "@/lib/daytona/client";
 import { retrieveSchema, retrieveSchemaMulti, type SchemaColumn } from "@/lib/agent/schema";
+import { downloadStorageFile } from "@/lib/storage/resolver";
 import { logUsage } from "@/lib/usage";
 import type {
   SqlResults,
@@ -245,12 +246,13 @@ export async function executeBigQuerySql(
 export async function executeDuckdbFileSql(
   sessionId: string,
   config: DuckdbFileConfig,
+  meta: Record<string, unknown>,
+  userId: string,
   sql: string,
   getSandbox?: SandboxProvider,
 ): Promise<SqlResults> {
-  const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
-  const stagedFile = await downloadFileForSandbox(config);
+  const stagedFile = await downloadStorageFile(meta, userId, config.filename);
+  const remotePath = stagedFile.remotePath;
 
   const code = `
 import duckdb, json, sys
@@ -301,12 +303,13 @@ print(json.dumps({"columns": columns, "rows": rows_str, "rowCount": len(result),
 export async function executeSqliteFileSql(
   sessionId: string,
   config: SqliteFileConfig,
+  meta: Record<string, unknown>,
+  userId: string,
   sql: string,
   getSandbox?: SandboxProvider,
 ): Promise<SqlResults> {
-  const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
-  const stagedFile = await downloadFileForSandbox(config);
+  const stagedFile = await downloadStorageFile(meta, userId, config.filename);
+  const remotePath = stagedFile.remotePath;
 
   const code = `
 import duckdb, json, sys
@@ -427,13 +430,15 @@ def load_and_clean_file(file_path, file_format):
 export async function executeFileSql(
   sessionId: string,
   config: FileConfig,
+  meta: Record<string, unknown>,
+  userId: string,
   sql: string,
   getSandbox?: SandboxProvider,
 ): Promise<SqlResults> {
+  const stagedFile = await downloadStorageFile(meta, userId, config.filename);
+  const remotePath = stagedFile.remotePath;
   const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
   const viewName = safeName.replace(/\.[^.]+$/, "");
-  const stagedFile = await downloadFileForSandbox(config);
 
   const code = `
 import duckdb, json, sys
@@ -496,6 +501,8 @@ print(json.dumps({"columns": columns, "rows": rows_str, "rowCount": len(result),
 export async function executeMultiFileSql(
   sessionId: string,
   files: FileConfig[],
+  metas: Record<string, unknown>[],
+  userId: string,
   sql: string,
   getSandbox?: SandboxProvider,
 ): Promise<SqlResults> {
@@ -504,9 +511,9 @@ export async function executeMultiFileSql(
   const viewDefs: { viewName: string; remotePath: string; format: string }[] = [];
   const stagedFiles: Array<{ buffer: Buffer; remotePath: string }> = [];
 
-  for (const config of files) {
+  for (let i = 0; i < files.length; i++) {
+    const config = files[i];
     const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
     const baseViewName = safeName.replace(/\.[^.]+$/, "");
     let viewName = baseViewName;
     let suffix = 2;
@@ -514,9 +521,11 @@ export async function executeMultiFileSql(
       viewName = `${baseViewName}_${suffix++}`;
     }
     usedNames.add(viewName);
+    // Download each file from the user's configured storage backend for
+    // staging in the ephemeral sandbox.
+    const staged = await downloadStorageFile(metas[i] ?? {}, userId, config.filename);
+    const remotePath = staged.remotePath;
     viewDefs.push({ viewName, remotePath, format: config.format });
-    // Download each file from Blob for staging in the ephemeral sandbox.
-    const staged = await downloadFileForSandbox(config);
     stagedFiles.push(staged);
   }
 
@@ -715,31 +724,6 @@ export function buildChartPayload(
 }
 
 // ============================================================
-// File download helpers
-// ============================================================
-
-/** Download a file from Vercel Blob and return { buffer, remotePath } for
- *  staging in the ephemeral sandbox. All file-based configs share the same
- *  blobUrl + filename shape, so one helper covers all types. */
-async function downloadFileForSandbox(
-  config: FileConfig | DuckdbFileConfig | SqliteFileConfig,
-): Promise<{ buffer: Buffer; remotePath: string }> {
-  const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
-  const fileResp = await fetch(config.blobUrl, {
-    headers: blobToken
-      ? { Authorization: `Bearer ${blobToken}` }
-      : undefined,
-  });
-  if (!fileResp.ok) {
-    throw new Error(`Failed to download file from Blob: ${fileResp.status}`);
-  }
-  const fileBuffer = Buffer.from(await fileResp.arrayBuffer());
-  const safeName = config.filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const remotePath = `${SANDBOX_DATA_DIR}/${safeName}`;
-  return { buffer: fileBuffer, remotePath };
-}
-
-// ============================================================
 // ReAct agent tools
 // ============================================================
 
@@ -849,6 +833,7 @@ export async function createAgentTools(
   // ctx.getSandbox) and shares it across the whole ReAct turn; if
   // ctx.getSandbox is absent, runPython falls back to ephemeral mode.
   let fileConfigs: FileConfig[] = [];
+  let fileMetas: Record<string, unknown>[] = [];
   let dbType = "";
   let dbConfig:
     | PgConfig
@@ -857,6 +842,7 @@ export async function createAgentTools(
     | DuckdbFileConfig
     | SqliteFileConfig
     | null = null;
+  let dbMeta: Record<string, unknown> = {};
 
   if (ctx.dataSourceType === "file") {
     if (ctx.fileDataSourceIds.length === 0) {
@@ -864,7 +850,7 @@ export async function createAgentTools(
     }
     const { data: dsRows } = await admin
       .from("data_sources")
-      .select("config_encrypted")
+      .select("config_encrypted, meta")
       .in("id", ctx.fileDataSourceIds);
     if (!dsRows || dsRows.length === 0) {
       throw new Error("No file data sources found");
@@ -872,11 +858,12 @@ export async function createAgentTools(
     for (const row of dsRows) {
       const cfg = await decryptConfig<FileConfig>(row.config_encrypted);
       fileConfigs.push(cfg);
+      fileMetas.push((row.meta ?? {}) as Record<string, unknown>);
     }
   } else if (ctx.dataSourceId) {
     const { data: ds, error } = await admin
       .from("data_sources")
-      .select("type, config_encrypted")
+      .select("type, config_encrypted, meta")
       .eq("id", ctx.dataSourceId)
       .single();
     if (error || !ds) {
@@ -886,6 +873,7 @@ export async function createAgentTools(
     dbConfig = await decryptConfig<
       PgConfig | MysqlConfig | BigQueryConfig | DuckdbFileConfig | SqliteFileConfig
     >(ds.config_encrypted);
+    dbMeta = (ds.meta ?? {}) as Record<string, unknown>;
   }
 
   const dialectLabel = dialectLabelFor(ctx.dataSourceType || dbType);
@@ -893,13 +881,13 @@ export async function createAgentTools(
   /** Dispatch a validated SQL string to the right executor by source type. */
   const runSql = async (sql: string): Promise<SqlResults> => {
     if (ctx.dataSourceType === "file") {
-      return executeMultiFileSql(ctx.sessionId, fileConfigs, sql, ctx.getSandbox);
+      return executeMultiFileSql(ctx.sessionId, fileConfigs, fileMetas, ctx.userId, sql, ctx.getSandbox);
     }
     if (dbType === "pg") return executePgSql(dbConfig as PgConfig, sql);
     if (dbType === "mysql") return executeMysqlSql(dbConfig as MysqlConfig, sql);
     if (dbType === "bigquery") return executeBigQuerySql(dbConfig as BigQueryConfig, sql);
-    if (dbType === "duckdb") return executeDuckdbFileSql(ctx.sessionId, dbConfig as DuckdbFileConfig, sql, ctx.getSandbox);
-    if (dbType === "sqlite") return executeSqliteFileSql(ctx.sessionId, dbConfig as SqliteFileConfig, sql, ctx.getSandbox);
+    if (dbType === "duckdb") return executeDuckdbFileSql(ctx.sessionId, dbConfig as DuckdbFileConfig, dbMeta, ctx.userId, sql, ctx.getSandbox);
+    if (dbType === "sqlite") return executeSqliteFileSql(ctx.sessionId, dbConfig as SqliteFileConfig, dbMeta, ctx.userId, sql, ctx.getSandbox);
     throw new Error(`SQL execution not supported for data source type: ${dbType}`);
   };
 

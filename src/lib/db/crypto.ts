@@ -7,6 +7,8 @@ import type {
   BigQueryConfig,
   DuckdbFileConfig,
   SqliteFileConfig,
+  LlmConfig,
+  StorageConfig,
 } from "@/lib/db/schema";
 
 /**
@@ -22,7 +24,7 @@ import type {
 
 /**
  * Encrypt a config object and return the ciphertext string.
- * The ciphertext is stored in data_sources.config_encrypted.
+ * The ciphertext is stored in data_sources.config_encrypted or user_settings.*_config_encrypted.
  */
 export async function encryptConfig(
   config:
@@ -32,7 +34,9 @@ export async function encryptConfig(
     | MysqlConfig
     | BigQueryConfig
     | DuckdbFileConfig
-    | SqliteFileConfig,
+    | SqliteFileConfig
+    | LlmConfig
+    | StorageConfig,
 ): Promise<string> {
   const admin = createAdminClient();
   const { data, error } = await admin.rpc("encrypt_config", {
@@ -56,7 +60,9 @@ export async function decryptConfig<
     | MysqlConfig
     | BigQueryConfig
     | DuckdbFileConfig
-    | SqliteFileConfig,
+    | SqliteFileConfig
+    | LlmConfig
+    | StorageConfig,
 >(
   ciphertext: string,
 ): Promise<T> {

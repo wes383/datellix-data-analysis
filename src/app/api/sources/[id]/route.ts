@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { encryptConfig } from "@/lib/db/crypto";
-import { deleteFile } from "@/lib/blob/client";
+import { deleteStorageFile } from "@/lib/storage/resolver";
 import type {
   PgConfig,
   MysqlConfig,
@@ -290,9 +290,10 @@ export async function DELETE(
     if (dsRow) {
       const meta = (dsRow.meta ?? {}) as Record<string, unknown>;
       const blobUrl = typeof meta.blobUrl === "string" ? meta.blobUrl : null;
-      if (blobUrl) {
+      const s3Key = typeof meta.s3Key === "string" ? meta.s3Key : null;
+      if (blobUrl || s3Key) {
         try {
-          await deleteFile(blobUrl);
+          await deleteStorageFile(meta, user.id);
         } catch {
           /* best-effort */
         }

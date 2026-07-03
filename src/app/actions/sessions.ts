@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { deleteFile } from "@/lib/blob/client";
+import { deleteStorageFile } from "@/lib/storage/resolver";
 
 /** Create a new analysis session */
 export async function createSession(dataSourceId?: string) {
@@ -94,19 +94,15 @@ export async function deleteSession(sessionId: string) {
 
       if (isFileType && ds) {
         const meta = (ds.meta ?? {}) as Record<string, unknown>;
-        const blobUrl =
-          typeof meta.blobUrl === "string" ? meta.blobUrl : null;
-        if (blobUrl) {
-          try {
-            await deleteFile(blobUrl);
-          } catch (err) {
-            // Log but don't fail the session deletion — orphaned Blob files
-            // can be reclaimed via Vercel lifecycle rules.
-            console.error(
-              `[deleteSession] failed to delete Blob file for data source ${session.data_source_id}:`,
-              err,
-            );
-          }
+        try {
+          await deleteStorageFile(meta, session.user_id);
+        } catch (err) {
+          // Log but don't fail the session deletion — orphaned storage files
+          // can be reclaimed via backend lifecycle rules.
+          console.error(
+            `[deleteSession] failed to delete storage file for data source ${session.data_source_id}:`,
+            err,
+          );
         }
         await admin.from("data_sources").delete().eq("id", session.data_source_id);
       }
@@ -140,23 +136,19 @@ export async function deleteSession(sessionId: string) {
         // cascade-deletes.
         const { data: ds } = await admin
           .from("data_sources")
-          .select("type, meta")
+          .select("type, meta, user_id")
           .eq("id", fileDsId)
           .single();
 
         if (ds) {
           const meta = (ds.meta ?? {}) as Record<string, unknown>;
-          const blobUrl =
-            typeof meta.blobUrl === "string" ? meta.blobUrl : null;
-          if (blobUrl) {
-            try {
-              await deleteFile(blobUrl);
-            } catch (err) {
-              console.error(
-                `[deleteSession] failed to delete Blob file for data source ${fileDsId}:`,
-                err,
-              );
-            }
+          try {
+            await deleteStorageFile(meta, ds.user_id as string);
+          } catch (err) {
+            console.error(
+              `[deleteSession] failed to delete storage file for data source ${fileDsId}:`,
+              err,
+            );
           }
           await admin.from("data_sources").delete().eq("id", fileDsId);
         }

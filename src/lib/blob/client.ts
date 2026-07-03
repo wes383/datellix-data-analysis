@@ -7,6 +7,10 @@ import { createHash } from "node:crypto";
  * Path convention: uploads/{userId}/{sessionId}/{filename}
  * Called by /api/upload route from Phase 1 onwards, stores raw CSV/Excel/Parquet
  * Queried directly with DuckDB inside Daytona sandbox on demand (fetched to temp disk first)
+ *
+ * All functions accept an optional `token` parameter. When omitted, the
+ * project-level BLOB_READ_WRITE_TOKEN env var is used. This allows per-user
+ * custom Blob tokens via user_settings.
  */
 
 /** Upload file to Blob, returns accessible URL.
@@ -15,34 +19,35 @@ import { createHash } from "node:crypto";
 export async function uploadFile(
   path: string,
   file: Blob | File | ArrayBuffer,
+  token?: string,
 ): Promise<string> {
   const blob = await put(path, file, {
     access: "private",
     addRandomSuffix: true,
-    token: process.env.BLOB_READ_WRITE_TOKEN,
+    token: token ?? process.env.BLOB_READ_WRITE_TOKEN,
   });
   return blob.url;
 }
 
 /** Delete file */
-export async function deleteFile(url: string): Promise<void> {
+export async function deleteFile(url: string, token?: string): Promise<void> {
   await del(url, {
-    token: process.env.BLOB_READ_WRITE_TOKEN,
+    token: token ?? process.env.BLOB_READ_WRITE_TOKEN,
   });
 }
 
 /** List files under a prefix */
-export async function listFiles(prefix: string) {
+export async function listFiles(prefix: string, token?: string) {
   return list({
     prefix,
-    token: process.env.BLOB_READ_WRITE_TOKEN,
+    token: token ?? process.env.BLOB_READ_WRITE_TOKEN,
   });
 }
 
 /** Get file metadata (size, type) */
-export async function getFileMeta(url: string) {
+export async function getFileMeta(url: string, token?: string) {
   return head(url, {
-    token: process.env.BLOB_READ_WRITE_TOKEN,
+    token: token ?? process.env.BLOB_READ_WRITE_TOKEN,
   });
 }
 

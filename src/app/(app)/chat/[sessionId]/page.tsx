@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { decryptConfig } from "@/lib/db/crypto";
 import { Chat } from "@/components/chat/chat";
-import type { Message, Artifact } from "@/lib/db/schema";
+import { normalizeLlmConfig, type Message, type Artifact, type LlmConfig } from "@/lib/db/schema";
 
 interface PageProps {
   params: Promise<{ sessionId: string }>;
@@ -105,6 +106,22 @@ export default async function ChatPage({ params }: PageProps) {
     .in("type", ["pg", "mysql", "bigquery", "file"])
     .order("updated_at", { ascending: false });
 
+  // Load the user's LLM config to extract available models for the
+  // model switcher in the chat composer. Only shown when the user has
+  // a custom config with more than one model.
+  let availableModels: string[] = [];
+  const { data: settingsRow } = await admin
+    .from("user_settings")
+    .select("llm_config_encrypted")
+    .eq("user_id", session.user_id)
+    .single();
+  if (settingsRow?.llm_config_encrypted) {
+    const cfg = normalizeLlmConfig(
+      await decryptConfig<LlmConfig>(settingsRow.llm_config_encrypted),
+    );
+    availableModels = cfg.models ?? [];
+  }
+
   return (
     <Chat
       sessionId={sessionId}
@@ -112,6 +129,7 @@ export default async function ChatPage({ params }: PageProps) {
       initialArtifacts={(artifacts ?? []) as unknown as Artifact[]}
       dataSource={dataSource}
       existingSources={(userSources ?? []) as unknown as { id: string; type: string; name: string; meta: Record<string, unknown> }[]}
+      availableModels={availableModels}
       key={sessionId}
     />
   );

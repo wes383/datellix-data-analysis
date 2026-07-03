@@ -3,7 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { encryptConfig } from "@/lib/db/crypto";
 import { indexDataSourceSchema } from "@/lib/agent/schema";
-import { uploadFile, blobPath, fileHash } from "@/lib/blob/client";
+import { fileHash } from "@/lib/blob/client";
+import { uploadStorageFile } from "@/lib/storage/resolver";
 import type {
   DataSourceType,
   PgConfig,
@@ -122,6 +123,9 @@ export async function POST(req: NextRequest) {
   let filename: string | undefined;
   let size: number | undefined;
   let blobPathValue: string | undefined;
+  let storageBackend: "vercel-blob" | "s3" | undefined;
+  let s3Key: string | undefined;
+  let s3Bucket: string | undefined;
   let uploadedFile: File | null = null;
   // For type === "existing" (bind an already-created data source):
   let existingSourceId: string | undefined;
@@ -397,8 +401,12 @@ export async function POST(req: NextRequest) {
   // ─── New data source: upload file (if FormData), build config, insert ──
   if ((dataSourceType === "duckdb" || dataSourceType === "sqlite") && isFormData) {
     // Only upload now — dedupe lookup above used the hash without uploading.
-    blobPathValue = blobPath(user.id, sessionId!, uploadedFile!.name);
-    blobUrl = await uploadFile(blobPathValue, uploadedFile!);
+    const storageInfo = await uploadStorageFile(user.id, sessionId!, uploadedFile!.name, uploadedFile!);
+    blobPathValue = storageInfo.blobPath;
+    blobUrl = storageInfo.blobUrl;
+    s3Key = storageInfo.s3Key;
+    s3Bucket = storageInfo.s3Bucket;
+    storageBackend = storageInfo.storageBackend;
     filename = uploadedFile!.name;
     size = uploadedFile!.size;
   }
@@ -435,14 +443,15 @@ export async function POST(req: NextRequest) {
     config = bqConfig;
     meta = { type: "bigquery", projectId };
   } else if (dataSourceType === "duckdb" || dataSourceType === "sqlite") {
-    if (!blobUrl || !filename || size == null) {
+    if ((!blobUrl && !s3Key) || !filename || size == null) {
       return NextResponse.json(
-        { error: `Missing required fields for ${dataSourceType}: blobUrl, filename, size` },
+        { error: `Missing required fields for ${dataSourceType}: blobUrl or s3Key, filename, size` },
         { status: 400 },
       );
     }
     const fileConfig: DuckdbFileConfig & SqliteFileConfig = {
-      blobUrl,
+      ...(blobUrl && { blobUrl }),
+      ...(s3Key && { s3Key, s3Bucket }),
       filename,
       size,
     };
@@ -454,6 +463,8 @@ export async function POST(req: NextRequest) {
     };
     if (blobPathValue) fileMeta.blobPath = blobPathValue;
     if (blobUrl) fileMeta.blobUrl = blobUrl;
+    if (s3Key) { fileMeta.s3Key = s3Key; fileMeta.s3Bucket = s3Bucket; }
+    if (storageBackend) fileMeta.storageBackend = storageBackend;
     if (fileContentHash) fileMeta.fileHash = fileContentHash;
     meta = fileMeta;
   } else {

@@ -116,11 +116,9 @@ export function AddDataSourceDialog({
       {open && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={handleClose}
         >
           <div
             className="relative flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-lg border border-border bg-card shadow-lg"
-            onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
             <div className="flex items-center justify-between border-b border-border px-5 py-3">
@@ -651,18 +649,19 @@ function ConnectTab({
           id="ds-type"
           value={type}
           disabled={isDisabled || submitting}
-          onChange={(e) => {
-            const next = e.target.value as "pg" | "mysql" | "bigquery";
+          onChange={(v) => {
+            const next = v as "pg" | "mysql" | "bigquery";
             setType(next);
             if (next === "pg" && form.port === "3306") update("port", "5432");
             else if (next === "mysql" && form.port === "5432")
               update("port", "3306");
           }}
-        >
-          <option value="pg">PostgreSQL</option>
-          <option value="mysql">MySQL</option>
-          <option value="bigquery">BigQuery</option>
-        </Select>
+          options={[
+            { value: "pg", label: "PostgreSQL" },
+            { value: "mysql", label: "MySQL" },
+            { value: "bigquery", label: "BigQuery" },
+          ]}
+        />
       </div>
 
       <div className="space-y-2">
@@ -758,13 +757,14 @@ function ConnectTab({
               id="ds-ssl"
               value={form.ssl}
               disabled={isDisabled || submitting}
-              onChange={(e) => update("ssl", e.target.value)}
-            >
-              <option value="require">require (recommended)</option>
-              <option value="disable">disable</option>
-              <option value="verify-ca">verify-ca</option>
-              <option value="verify-full">verify-full</option>
-            </Select>
+              onChange={(v) => update("ssl", v)}
+              options={[
+                { value: "require", label: "require (recommended)" },
+                { value: "disable", label: "disable" },
+                { value: "verify-ca", label: "verify-ca" },
+                { value: "verify-full", label: "verify-full" },
+              ]}
+            />
           </div>
         </>
       )}

@@ -1,5 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { decryptConfig } from "@/lib/db/crypto";
 import { Chat } from "@/components/chat/chat";
+import { normalizeLlmConfig, type LlmConfig } from "@/lib/db/schema";
 
 /**
  * Pending new-session page.
@@ -25,6 +28,23 @@ export default async function NewSessionPage() {
         .order("updated_at", { ascending: false })
     : { data: null };
 
+  // Load available models for the model switcher (same as the session page).
+  let availableModels: string[] = [];
+  if (user) {
+    const admin = createAdminClient();
+    const { data: settingsRow } = await admin
+      .from("user_settings")
+      .select("llm_config_encrypted")
+      .eq("user_id", user.id)
+      .single();
+    if (settingsRow?.llm_config_encrypted) {
+      const cfg = normalizeLlmConfig(
+        await decryptConfig<LlmConfig>(settingsRow.llm_config_encrypted),
+      );
+      availableModels = cfg.models ?? [];
+    }
+  }
+
   return (
     <Chat
       sessionId="new"
@@ -39,6 +59,7 @@ export default async function NewSessionPage() {
           meta: Record<string, unknown>;
         }[]
       }
+      availableModels={availableModels}
     />
   );
 }
