@@ -546,23 +546,33 @@ export async function POST(req: NextRequest) {
         }
 
         send("[DONE]");
-
-        // 6. Persist assistant reply. Segments (tool / artifact / text) are
-        //    saved on the `tool_calls` jsonb column so the UI can rebuild the
-        //    interleaved layout on refresh. Tool segments keep their id so the
-        //    frontend can still pair them if needed.
-        if (assistantContent || segments.length > 0) {
-          await supabase.from("messages").insert({
-            session_id: sessionId,
-            role: "assistant",
-            content: assistantContent,
-            tool_calls: segments.length > 0 ? segments : null,
-          });
-        }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Agent execution failed";
-        send({ error: msg });
+        // If the client disconnected (abort / page close), enqueuing will
+        // throw — that's expected, don't treat it as a real error.
+        try {
+          const msg = err instanceof Error ? err.message : "Agent execution failed";
+          send({ error: msg });
+        } catch {
+          // Controller is closed (client gone) — swallow.
+        }
       } finally {
+        // 6. Persist assistant reply — moved to `finally` so partial output
+        //    survives client abort and page close/refresh. Segments (tool /
+        //    artifact / text) are saved on the `tool_calls` jsonb column so
+        //    the UI can rebuild the interleaved layout on reload. Thinking
+        //    segments are already excluded (never pushed to `segments`).
+        try {
+          if (assistantContent || segments.length > 0) {
+            await supabase.from("messages").insert({
+              session_id: sessionId,
+              role: "assistant",
+              content: assistantContent,
+              tool_calls: segments.length > 0 ? segments : null,
+            });
+          }
+        } catch (persistErr) {
+          console.error("[chat] failed to persist assistant message:", persistErr);
+        }
         // Clean up the request-level sandbox if one was created. This runs
         // on success, error, and (best-effort) client disconnect. If the
         // sandbox creation itself failed, `sandboxPromise` is a rejected

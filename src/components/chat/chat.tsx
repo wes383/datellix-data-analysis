@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUp, ChevronRight, Database, Loader2, Plus, Wrench, X } from "lucide-react";
+import { ArrowUp, ChevronRight, Database, Loader2, Plus, Square, Wrench, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { toast } from "sonner";
@@ -162,6 +162,10 @@ export function Chat({
   const [removingFileId, setRemovingFileId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // AbortController for the current streaming request. When the user clicks
+  // the stop button (or the page unloads), we call .abort() to cancel the
+  // fetch — the server detects the disconnect and persists partial output.
+  const abortControllerRef = useRef<AbortController | null>(null);
   // Debounce timer for writing the draft to localStorage — avoids a write
   // on every keystroke.
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -229,6 +233,18 @@ export function Chat({
     };
   }, []);
 
+  // Abort the streaming fetch when the page is closed/refreshed so the
+  // server detects the disconnect and persists partial AI output.
+  useEffect(() => {
+    function handleBeforeUnload() {
+      abortControllerRef.current?.abort();
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, []);
+
   // Derived streaming text (concatenation of all text items, for final persist)
   const pendingAssistant = pendingItems
     .filter((it): it is { kind: "text"; content: string } => it.kind === "text")
@@ -278,6 +294,31 @@ export function Chat({
     setStreaming(true);
     setPendingItems([]);
 
+    // Declare accumulators before try so they're accessible in catch (for
+    // preserving partial output on abort / error).
+    let assistantContent = "";
+    const collectedArtifacts: ArtifactView[] = [];
+    const items: PendingItem[] = [];
+
+    const pushItem = (item: PendingItem) => {
+      const last = items[items.length - 1];
+      if (
+        last &&
+        ((last.kind === "text" && item.kind === "text") ||
+          (last.kind === "thinking" && item.kind === "thinking"))
+      ) {
+        (last as { content: string }).content += item.content;
+      } else {
+        items.push(item);
+      }
+      setPendingItems([...items]);
+    };
+
+    // Create an AbortController for this request so the user can interrupt
+    // streaming. Also aborted on page unload (see beforeunload effect).
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -287,6 +328,7 @@ export function Chat({
           message: text,
           ...(selectedModel && { model: selectedModel }),
         }),
+        signal: abortController.signal,
       });
       if (!res.ok || !res.body) {
         const errBody = await res.text();
@@ -296,27 +338,6 @@ export function Chat({
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let assistantContent = "";
-      const collectedArtifacts: ArtifactView[] = [];
-      const items: PendingItem[] = [];
-
-      const pushItem = (item: PendingItem) => {
-        // Consecutive chunks of the same kind (text↔text, thinking↔thinking)
-        // merge into the last item so streaming tokens accumulate instead of
-        // creating one PendingItem per token. All other event types start a
-        // new item so the render order matches arrival.
-        const last = items[items.length - 1];
-        if (
-          last &&
-          ((last.kind === "text" && item.kind === "text") ||
-            (last.kind === "thinking" && item.kind === "thinking"))
-        ) {
-          (last as { content: string }).content += item.content;
-        } else {
-          items.push(item);
-        }
-        setPendingItems([...items]);
-      };
 
       while (true) {
         const { value, done } = await reader.read();
@@ -334,11 +355,6 @@ export function Chat({
             const data = JSON.parse(payload) as StreamMessage;
             if (data.error) throw new Error(data.error);
 
-            // 1. Tool call announced — create a tool item with empty content
-            //    and completed=false so the UI shows a running spinner.
-            //    The server may attach the run_python code directly on the
-            //    tool_call event (when args were complete at announcement
-            //    time) so the UI can render the code immediately.
             if (data.tool_call) {
               pushItem({
                 kind: "tool",
@@ -350,9 +366,6 @@ export function Chat({
               });
             }
 
-            // 2a. Tool progress — intermediate update for long-running tools.
-            //     For run_python, this carries the code while Daytona is still
-            //     executing, so the user can see what is being run.
             if (data.tool_progress) {
               const tp = data.tool_progress;
               const existing = items.find(
@@ -365,8 +378,6 @@ export function Chat({
               }
             }
 
-            // 2b. Tool result — find the previously-announced tool item by id
-            //    and fill in the content, marking it completed.
             if (data.tool_result) {
               const tr = data.tool_result;
               const existing = items.find(
@@ -377,7 +388,6 @@ export function Chat({
                 existing.content = tr.content;
                 existing.completed = true;
               } else {
-                // Tool result without prior announcement — create one.
                 pushItem({
                   kind: "tool",
                   id: tr.id,
@@ -389,18 +399,15 @@ export function Chat({
               setPendingItems([...items]);
             }
 
-            // 3. Reasoning / thinking content (collapsible CoT)
             if (data.thinking) {
               pushItem({ kind: "thinking", content: data.thinking });
             }
 
-            // 4. Visible text content (narration + final answer)
             if (data.content) {
               assistantContent += data.content;
               pushItem({ kind: "text", content: data.content });
             }
 
-            // 5. Artifact from a content_and_artifact tool
             if (data.artifact) {
               const artifact: ArtifactView = {
                 type: data.artifact.type,
@@ -416,27 +423,52 @@ export function Chat({
         }
       }
 
+      // Normal completion — add the assistant message to local state.
       if (assistantContent || collectedArtifacts.length > 0 || items.length > 0) {
         const assistantMessage: ChatMessage = {
           id: `temp-${Date.now()}`,
-          session_id: sessionId,
+          session_id: activeSessionId,
           role: "assistant",
           content: assistantContent,
           tool_calls: null,
           created_at: new Date().toISOString(),
           artifacts: collectedArtifacts,
-          // Preserve full interleaved order (tool + artifact + text) so
-          // MessageRow can render a collapsible "thinking process" section.
           segments: items,
         };
         setMessages((prev) => [...prev, assistantMessage]);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Streaming failed";
-      toast.error(msg);
+      const isAbort =
+        err instanceof Error &&
+        (err.name === "AbortError" || err.message.includes("aborted"));
+
+      if (isAbort) {
+        // User clicked stop (or page unloaded). Preserve whatever the AI
+        // already produced so it isn't lost. The server also persists this
+        // partial output to the database (in its finally block), so it
+        // survives a page refresh.
+        if (assistantContent || collectedArtifacts.length > 0 || items.length > 0) {
+          const assistantMessage: ChatMessage = {
+            id: `temp-${Date.now()}`,
+            session_id: activeSessionId,
+            role: "assistant",
+            content: assistantContent,
+            tool_calls: null,
+            created_at: new Date().toISOString(),
+            artifacts: collectedArtifacts,
+            segments: items,
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
+        }
+        // No error toast for user-initiated abort.
+      } else {
+        const msg = err instanceof Error ? err.message : "Streaming failed";
+        toast.error(msg);
+      }
     } finally {
       setPendingItems([]);
       setStreaming(false);
+      abortControllerRef.current = null;
       inputRef.current?.focus();
       if (isNewSession && activeSessionId) {
         router.replace(`/chat/${activeSessionId}`);
@@ -445,6 +477,11 @@ export function Chat({
       // (the API route updates the title from the first user message).
       router.refresh();
     }
+  }
+
+  /** Stop the current AI stream. Already-output content is preserved. */
+  function handleStop() {
+    abortControllerRef.current?.abort();
   }
 
   async function handleRemoveFile(fileId: string) {
@@ -560,19 +597,27 @@ export function Chat({
                 className="shrink-0"
               />
             )}
-            <Button
-              type="submit"
-              size="icon"
-              disabled={streaming || !input.trim()}
-              className="h-8 w-8 shrink-0 self-end rounded-full p-0 font-medium"
-              aria-label="Send"
-            >
-              {streaming ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
+            {streaming ? (
+              <Button
+                type="button"
+                size="icon"
+                onClick={handleStop}
+                className="h-8 w-8 shrink-0 self-end rounded-full p-0 font-medium"
+                aria-label="Stop"
+              >
+                <Square className="h-3.5 w-3.5 fill-current" />
+              </Button>
+            ) : (
+              <Button
+                type="submit"
+                size="icon"
+                disabled={!input.trim()}
+                className="h-8 w-8 shrink-0 self-end rounded-full p-0 font-medium"
+                aria-label="Send"
+              >
                 <ArrowUp className="h-4 w-4" />
-              )}
-            </Button>
+              </Button>
+            )}
           </div>
         </form>
       </div>

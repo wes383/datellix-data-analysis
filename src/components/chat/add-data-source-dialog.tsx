@@ -92,12 +92,16 @@ export function AddDataSourceDialog({
     setOpen(false);
   }
 
-  /** Resolve a real session ID, creating the session if sessionId === "new". */
+  /** Resolve a real session ID, creating the session if sessionId === "new".
+   *  NOTE: does NOT call router.replace here. The Chat component is keyed
+   *  by sessionId, so navigating to the new URL mid-upload would remount
+   *  the entire tree and close this dialog (resetting `open` to false),
+   *  aborting the upload loop visually. Callers must perform the redirect
+   *  themselves after their work is done. */
   async function ensureSession(): Promise<string | null> {
     if (sessionId !== "new") return sessionId;
     try {
       const s = await createSession();
-      router.replace(`/chat/${s.id}`);
       return s.id;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to create session";
@@ -283,8 +287,12 @@ function ExistingTab({
         throw new Error(msg || `Failed to bind source: ${res.status}`);
       }
       toast.success("Data source connected");
-      router.refresh();
       onClose();
+      if (sessionId === "new") {
+        router.replace(`/chat/${sid}`);
+      } else {
+        router.refresh();
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to connect";
       toast.error(msg);
@@ -384,55 +392,134 @@ function UploadTab({
 }) {
   const router = useRouter();
   const [uploading, setUploading] = useState(false);
+  // Progress: "Uploading 2 / 5…" — completed count out of total.
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  async function handleFile(file: File) {
-    const name = file.name.toLowerCase();
-    const ok = [
-      ".csv",
-      ".xlsx",
-      ".xls",
-      ".parquet",
-      ".duckdb",
-      ".db",
-      ".sqlite",
-      ".sqlite3",
-    ].some((ext) => name.endsWith(ext));
-    if (!ok) {
+  const ACCEPTED_EXTS = [".csv", ".xlsx", ".xls", ".parquet"];
+
+  async function handleFiles(files: File[]) {
+    if (files.length === 0) return;
+
+    // Validate extensions up front. Reject the whole batch if any file is
+    // unsupported — avoids partial uploads of mixed batches and makes the
+    // error message list every offending file.
+    const invalid = files.filter((f) => {
+      const name = f.name.toLowerCase();
+      return !ACCEPTED_EXTS.some((ext) => name.endsWith(ext));
+    });
+    if (invalid.length > 0) {
       toast.error(
-        "Unsupported format. Accepted: .csv, .xlsx, .xls, .parquet, .duckdb, .db, .sqlite",
+        `Unsupported format: ${invalid.map((f) => f.name).join(", ")}. Accepted: ${ACCEPTED_EXTS.join(", ")}. DuckDB / SQLite files use the Connect database tab.`,
       );
       return;
     }
+
     setUploading(true);
+    setProgress({ done: 0, total: files.length });
     try {
       const sid = await ensureSession();
       if (!sid) {
         setUploading(false);
+        setProgress(null);
         return;
       }
-      const formData = new FormData();
-      formData.append("sessionId", sid);
-      formData.append("file", file);
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-      if (!res.ok) {
-        const msg = await res.text();
-        throw new Error(msg || `Upload failed: ${res.status}`);
+
+      // Upload files SEQUENTIALLY (not concurrently). Each /api/upload
+      // request indexes the file's schema by spinning up an ephemeral
+      // sandbox and running Python. Concurrent uploads would create multiple
+      // sandboxes in parallel, which can race / fail silently — and since
+      // indexing is best-effort on the server, the file would appear
+      // uploaded in the UI but be invisible to the AI (no schema_embeddings
+      // rows). Serial uploads avoid this sandbox contention.
+      const successes: { name: string; reused: boolean; indexed: boolean }[] = [];
+      const failures: { name: string; error: string }[] = [];
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        try {
+          const formData = new FormData();
+          formData.append("sessionId", sid);
+          formData.append("file", file);
+          const res = await fetch("/api/upload", {
+            method: "POST",
+            body: formData,
+          });
+          if (!res.ok) {
+            const msg = await res.text();
+            throw new Error(msg || `Upload failed: ${res.status}`);
+          }
+          const data = (await res.json()) as {
+            reused?: boolean;
+            indexed?: boolean;
+            indexError?: string;
+          };
+          successes.push({
+            name: file.name,
+            reused: !!data.reused,
+            indexed: !!data.indexed,
+          });
+        } catch (err) {
+          failures.push({
+            name: file.name,
+            error: err instanceof Error ? err.message : "Upload failed",
+          });
+        }
+        setProgress({ done: i + 1, total: files.length });
       }
-      const data = (await res.json()) as { reused?: boolean };
-      toast.success(
-        data.reused ? "File reused from previous upload" : "File uploaded",
-      );
-      router.refresh();
-      onClose();
+
+      if (successes.length > 0) {
+        const reusedCount = successes.filter((s) => s.reused).length;
+        const newCount = successes.length - reusedCount;
+        const indexedFailed = successes.filter((s) => !s.indexed);
+        const parts: string[] = [];
+        if (newCount > 0) parts.push(`${newCount} new file${newCount > 1 ? "s" : ""} uploaded`);
+        if (reusedCount > 0) parts.push(`${reusedCount} reused`);
+        toast.success(
+          parts.length > 0 ? parts.join(" · ") : "Files uploaded",
+          {
+            description:
+              successes.length > 1
+                ? `${successes.map((s) => s.name).join(", ")}`
+                : undefined,
+          },
+        );
+        // Warn the user if any file's schema indexing failed — the file is
+        // uploaded but the AI can't see its columns/tables.
+        if (indexedFailed.length > 0) {
+          toast.warning(
+            `Schema indexing failed for ${indexedFailed.length} file${indexedFailed.length > 1 ? "s" : ""}: ${indexedFailed.map((f) => f.name).join(", ")}`,
+            {
+              description: "The AI may not be able to query these files. Try re-uploading.",
+            },
+          );
+        }
+      }
+      if (failures.length > 0) {
+        toast.error(
+          `${failures.length} file${failures.length > 1 ? "s" : ""} failed: ${failures[0].error}`,
+        );
+      }
+
+      // Only close + refresh if at least one file succeeded.
+      if (successes.length > 0) {
+        onClose();
+        // For a newly-created session, navigate to its URL now — this
+        // remounts Chat with the real sessionId and fetches fresh data
+        // (including the uploaded files). For an existing session, just
+        // refresh the current route to pick up the new files.
+        if (sessionId === "new") {
+          router.replace(`/chat/${sid}`);
+        } else {
+          router.refresh();
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Upload failed";
       toast.error(msg);
     } finally {
       setUploading(false);
+      setProgress(null);
     }
   }
 
@@ -446,8 +533,9 @@ function UploadTab({
         </ModeNotice>
       )}
       <p className="text-sm text-muted-foreground">
-        Upload a data file. CSV/Excel/Parquet are queried via DuckDB in the
-        sandbox; .duckdb/.db/.sqlite files are attached directly as databases.
+        Upload data files (CSV / Excel / Parquet). Files are queried via
+        DuckDB in the sandbox. For DuckDB / SQLite database files, use the
+        Connect database tab.
       </p>
       <div
         className={`flex flex-col items-center justify-center rounded-md border border-dashed border-border px-6 py-10 text-center ${
@@ -459,26 +547,29 @@ function UploadTab({
         onDrop={(e) => {
           e.preventDefault();
           if (isDisabled) return;
-          const file = e.dataTransfer.files?.[0];
-          if (file) handleFile(file);
+          const dropped = Array.from(e.dataTransfer.files ?? []);
+          if (dropped.length > 0) handleFiles(dropped);
         }}
       >
         <Upload className="mb-2 h-6 w-6 text-muted-foreground" />
         <p className="text-sm font-medium">
-          {uploading ? "Uploading..." : "Drop file here or click to browse"}
+          {uploading && progress
+            ? `Uploading ${progress.done} / ${progress.total}…`
+            : "Drop files here or click to browse"}
         </p>
         <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-          CSV · XLSX · XLS · Parquet · DuckDB · SQLite
+          CSV · XLSX · XLS · Parquet
         </p>
         <input
           ref={fileInputRef}
           type="file"
+          multiple
           disabled={isDisabled}
           className="hidden"
-          accept=".csv,.xlsx,.xls,.parquet,.duckdb,.db,.sqlite,.sqlite3"
+          accept=".csv,.xlsx,.xls,.parquet"
           onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleFile(file);
+            const picked = Array.from(e.target.files ?? []);
+            if (picked.length > 0) handleFiles(picked);
             e.target.value = "";
           }}
         />
@@ -498,7 +589,7 @@ function UploadTab({
           ) : (
             <>
               <Upload className="h-3.5 w-3.5" />
-              Select file
+              Select files
             </>
           )}
         </Button>
@@ -523,7 +614,10 @@ function ConnectTab({
 }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
-  const [type, setType] = useState<"pg" | "mysql" | "bigquery">("pg");
+  const [type, setType] = useState<
+    "pg" | "mysql" | "bigquery" | "duckdb" | "sqlite"
+  >("pg");
+  const [file, setFile] = useState<File | null>(null);
   const [form, setForm] = useState({
     name: "",
     host: "",
@@ -556,6 +650,58 @@ function ConnectTab({
         setSubmitting(false);
         return;
       }
+
+      // duckdb / sqlite: upload the file via FormData so the server uploads
+      // it to storage and binds the data source in single-DB mode
+      // (sessions.data_source_id). This is the same path used by the
+      // /sources/new page.
+      if (type === "duckdb" || type === "sqlite") {
+        if (!file) {
+          toast.error("Please select a database file");
+          setSubmitting(false);
+          return;
+        }
+        const formData = new FormData();
+        formData.append("type", type);
+        formData.append("name", form.name.trim());
+        formData.append("sessionId", sid);
+        formData.append("file", file);
+
+        const res = await fetch("/api/sources", {
+          method: "POST",
+          body: formData,
+        });
+        if (!res.ok) {
+          const msg = await res.text();
+          throw new Error(msg || `Request failed: ${res.status}`);
+        }
+        const data = (await res.json()) as {
+          reused?: boolean;
+          indexed?: boolean;
+          indexError?: string;
+        };
+        toast.success(
+          data.reused
+            ? "Reused existing data source"
+            : `Data source "${form.name.trim()}" connected`,
+          {
+            description: data.indexed
+              ? "Schema indexed successfully"
+              : data.indexError
+                ? `Schema indexing failed: ${data.indexError}`
+                : undefined,
+          },
+        );
+        onClose();
+        if (sessionId === "new") {
+          router.replace(`/chat/${sid}`);
+        } else {
+          router.refresh();
+        }
+        return;
+      }
+
+      // pg / mysql / bigquery: JSON body
       const body: Record<string, unknown> = {
         type,
         name: form.name.trim(),
@@ -616,8 +762,12 @@ function ConnectTab({
               : undefined,
         },
       );
-      router.refresh();
       onClose();
+      if (sessionId === "new") {
+        router.replace(`/chat/${sid}`);
+      } else {
+        router.refresh();
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Request failed";
       toast.error(msg);
@@ -629,6 +779,7 @@ function ConnectTab({
   const isDisabled = dataSourceMode === "files";
   const isPgOrMysql = type === "pg" || type === "mysql";
   const isBigquery = type === "bigquery";
+  const isFileDb = type === "duckdb" || type === "sqlite";
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -650,7 +801,12 @@ function ConnectTab({
           value={type}
           disabled={isDisabled || submitting}
           onChange={(v) => {
-            const next = v as "pg" | "mysql" | "bigquery";
+            const next = v as
+              | "pg"
+              | "mysql"
+              | "bigquery"
+              | "duckdb"
+              | "sqlite";
             setType(next);
             if (next === "pg" && form.port === "3306") update("port", "5432");
             else if (next === "mysql" && form.port === "5432")
@@ -660,6 +816,8 @@ function ConnectTab({
             { value: "pg", label: "PostgreSQL" },
             { value: "mysql", label: "MySQL" },
             { value: "bigquery", label: "BigQuery" },
+            { value: "duckdb", label: "DuckDB file" },
+            { value: "sqlite", label: "SQLite file" },
           ]}
         />
       </div>
@@ -825,6 +983,33 @@ function ConnectTab({
         </>
       )}
 
+      {/* duckdb / sqlite file input */}
+      {isFileDb && (
+        <div className="space-y-2">
+          <Label htmlFor="ds-file">
+            {type === "duckdb" ? "DuckDB file" : "SQLite file"}{" "}
+            <span className="text-destructive">*</span>
+          </Label>
+          <Input
+            id="ds-file"
+            type="file"
+            disabled={isDisabled || submitting}
+            accept={type === "duckdb" ? ".duckdb" : ".db,.sqlite,.sqlite3"}
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            required
+          />
+          {file && (
+            <p className="font-mono text-[10px] text-muted-foreground">
+              Selected: {file.name} ({(file.size / 1024).toFixed(1)} KB)
+            </p>
+          )}
+          <p className="font-mono text-[10px] text-muted-foreground">
+            The file is uploaded to storage and queried inside the sandbox at
+            runtime. Bound in single-DB mode — only one database per session.
+          </p>
+        </div>
+      )}
+
       <div className="flex justify-end pt-2">
         <Button type="submit" disabled={isDisabled || submitting}>
           {submitting ? (
@@ -832,6 +1017,8 @@ function ConnectTab({
               <Loader2 className="h-4 w-4 animate-spin" />
               Connecting
             </>
+          ) : isFileDb ? (
+            "Upload & connect"
           ) : (
             "Connect & index"
           )}

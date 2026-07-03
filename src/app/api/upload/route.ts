@@ -46,6 +46,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing sessionId or file" }, { status: 400 });
   }
 
+  // Reject DuckDB / SQLite database files here — they must go through
+  // /api/sources (Connect database tab) so they're bound in single-DB mode
+  // (sessions.data_source_id). Allowing them here would put them in multi-file
+  // mode (session_data_sources), but executeMultiFileSql only supports
+  // csv/excel/parquet — duckdb/sqlite files would fail at query time.
+  const lowerName = file.name.toLowerCase();
+  const isDbFile = [".duckdb", ".db", ".sqlite", ".sqlite3"].some((ext) =>
+    lowerName.endsWith(ext),
+  );
+  if (isDbFile) {
+    return NextResponse.json(
+      {
+        error:
+          "DuckDB / SQLite files must be added via the Connect database tab, not uploaded as data files.",
+      },
+      { status: 400 },
+    );
+  }
+
   // Verify session ownership
   const { data: session } = await supabase
     .from("sessions")
@@ -71,11 +90,9 @@ export async function POST(req: NextRequest) {
   }
 
   const format = detectFormat(file.name);
-  // Detect data source type from extension: .duckdb → duckdb,
-  // .db/.sqlite/.sqlite3 → sqlite, everything else → file.
-  // This lets the chat upload dialog support database files without a
-  // separate form — the type is inferred from the file extension.
-  const dsType = detectDataSourceType(file.name);
+  // Upload tab only accepts csv/excel/parquet data files now — duckdb/sqlite
+  // database files go through /api/sources (Connect database tab).
+  const dsType = "file" as const;
 
   // 1. Compute content hash for deduplication.
   const hash = await fileHash(file);
@@ -200,20 +217,5 @@ function detectFormat(filename: string): string {
   if (ext === "csv") return "csv";
   if (ext === "xlsx" || ext === "xls") return "excel";
   if (ext === "parquet") return "parquet";
-  if (ext === "duckdb") return "duckdb";
-  if (ext === "db" || ext === "sqlite" || ext === "sqlite3") return "sqlite";
   return "unknown";
-}
-
-/**
- * Map a filename's extension to a data source type.
- * .duckdb → duckdb, .db/.sqlite/.sqlite3 → sqlite, everything else → file.
- */
-function detectDataSourceType(
-  filename: string,
-): "file" | "duckdb" | "sqlite" {
-  const ext = filename.split(".").pop()?.toLowerCase();
-  if (ext === "duckdb") return "duckdb";
-  if (ext === "db" || ext === "sqlite" || ext === "sqlite3") return "sqlite";
-  return "file";
 }
