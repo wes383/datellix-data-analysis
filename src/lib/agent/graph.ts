@@ -107,9 +107,23 @@ You have access to tools. Use them autonomously and as many times as needed to f
 7. For clustering, call \`run_cluster\` with the SQL, feature columns, method (kmeans/dbscan), and optional cluster count.
 8. For charts that Recharts can't render (3D, geographic, sankey, candlestick, heatmap, sunburst, large datasets, etc.), call \`build_plotly_chart\` with SQL + Python code that creates a plotly figure and assigns it to \`fig\`. The chart type is entirely determined by the Python code (e.g. \`px.scatter_3d\`, \`px.heatmap\`, \`px.choropleth\`, \`px.sunburst\`, \`px.candlestick\`) — choose the appropriate plotly.express / graph_objects constructor for the user's request.
 9. For custom analysis or data transformations beyond SQL, call \`run_python\` with Python code (pandas, duckdb, sklearn, statsmodels, matplotlib, plotly available). Optionally pass a SQL query to pre-load results as a pandas DataFrame \`df\`.
-10. When the user asks for business insights, trend analysis, anomaly detection, root-cause analysis, or recommendations, call \`analyze_insights\` with a SELECT SQL, the analysisType (trend/anomaly/root_cause/recommendation/comprehensive), and an optional focus. The tool runs statistical analysis in the sandbox and uses the LLM to produce a structured Markdown report with Trend / Anomalies / Likely Causes / Recommendations sections.
-11. When the user asks to generate a report, document, or written summary, call \`generate_report\` with a title and the full Markdown body (which you write yourself in the user's language). To embed charts/tables/summaries produced earlier in this session, insert \`{{artifact:ID}}\` markers on their own lines in the Markdown body at the desired positions, and list the IDs in \`embeddedArtifactIds\`. Each artifact-producing tool result includes an \`[artifact:ID]\` tag — use that ID. You decide what else to include — SQL snippets, result previews, metadata (subtitle, data sources via includeDataSources). The frontend renders the report with react-markdown and offers a download menu (PDF / Markdown).
-12. After gathering what you need, write a clear, concise natural-language answer that references the data you found. Do not just dump raw rows — interpret them.
+10. When the user asks to generate a report, document, or written summary, call \`generate_report\` with a title and the full Markdown body (which you write yourself in the user's language). To embed charts/tables/summaries produced earlier in this session, insert \`{{artifact:ID}}\` markers on their own lines in the Markdown body at the desired positions, and list the IDs in \`embeddedArtifactIds\`. Each artifact-producing tool result includes an \`[artifact:ID]\` tag — use that ID. You decide what else to include — SQL snippets, result previews, metadata (subtitle, data sources via includeDataSources). The frontend renders the report with react-markdown and offers a download menu (PDF / Markdown).
+11. After gathering what you need, write a clear, concise natural-language answer that references the data you found. Do not just dump raw rows — interpret them.
+
+## Autonomous data exploration
+
+For open-ended analysis requests, do NOT run a single SQL and jump straight to a canned summary. Explore the data autonomously over multiple SQL rounds, forming and validating hypotheses as you go.
+
+Process:
+1. **Orient**: Inspect schema and run a quick sample/count query to understand the data shape.
+2. **Form hypotheses**: Propose 2–3 angles worth investigating. State them before querying.
+3. **Query & inspect**: Run one SQL per hypothesis. Look at actual numbers, not just success/failure.
+4. **Drill down**: Follow up on surprising or promising results with new SQLs. Don't stop at the first layer.
+5. **Validate causes**: For "why" questions, query related columns/tables to confirm or refute causes. Prefer evidence over speculation.
+6. **Know when to stop**: Default budget is ~6–10 SQL calls. Stop earlier if the data clearly answers the question; go deeper if the user asked for thorough analysis. Re-querying to fix syntax errors doesn't count.
+7. **Synthesize**: Either write the final answer referencing the numbers found, or call \`generate_report\` weaving together findings, embedded artifacts, and interpretation. For statistical deep-dives, use \`summarize_data\` or \`run_python\`.
+
+Transparency: Narrate before each SQL what you're checking and why, and after each result what you noticed. Do NOT silently chain tool calls back-to-back.
 
 Rules:
 - Only run SELECT / WITH...SELECT queries. Never INSERT/UPDATE/DELETE/DDL.
@@ -248,7 +262,12 @@ export async function* streamAgent(params: {
     {
       configurable: { thread_id: sessionId },
       streamMode: ["messages"],
-      recursionLimit: 30,
+      // recursionLimit caps the ReAct loop. Raised from 30 → 40 to support
+      // autonomous data exploration (6–10 SQL rounds + narration + final
+      // synthesis via generate_report). Each ReAct turn = 1 agent step + 1
+      // tool step, so 10 SQL calls alone consume 20 steps before the final
+      // answer; 40 leaves comfortable headroom.
+      recursionLimit: 40,
     },
   );
 

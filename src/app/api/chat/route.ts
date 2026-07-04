@@ -298,6 +298,7 @@ export async function POST(req: NextRequest) {
 
       try {
         const llmConfig = await loadUserLlmConfig(user.id);
+
         for await (const chunk of streamAgent({
           sessionId,
           question: message,

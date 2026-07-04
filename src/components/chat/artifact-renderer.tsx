@@ -605,7 +605,9 @@ function renderBody(
       );
 
     case "summary":
-      return <SummaryArtifactView payload={artifact.payload as SummaryPayload} />;
+      return (
+        <SummaryArtifactView payload={artifact.payload as SummaryPayload} />
+      );
 
     case "report":
       return (
@@ -741,14 +743,17 @@ function SummaryArtifactView({ payload }: { payload: SummaryPayload }) {
   const { text, stats } = payload;
   return (
     <div>
-      {/* Render as Markdown so analyze_insights output (with headings,
-          lists, tables) displays correctly. Plain-text summaries from
-          summarize_data also render fine (no Markdown syntax = plain text). */}
+      {/* Render as Markdown so summarize_data output (with headings,
+          lists, tables) displays correctly. Plain-text summaries also
+          render fine (no Markdown syntax = plain text). */}
       <div className="text-sm">
         <Markdown content={text} />
       </div>
       {stats && Object.keys(stats).length > 0 && (
-        <dl className="mt-3 grid grid-cols-2 gap-2 border-t border-border pt-3 sm:grid-cols-3">
+        <dl
+          data-pdf-exclude
+          className="mt-3 grid grid-cols-2 gap-2 border-t border-border pt-3 sm:grid-cols-3"
+        >
           {Object.entries(stats).map(([key, value]) => (
             <div key={key} className="space-y-0.5">
               <dt className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">

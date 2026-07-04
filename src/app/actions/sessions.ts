@@ -190,3 +190,89 @@ export async function signOut() {
   await supabase.auth.signOut();
   revalidatePath("/");
 }
+
+/**
+ * Permanently delete the current user's account and all associated data.
+ *
+ * Cleanup order:
+ * 1. Load all session ids for the user → delete LangGraph checkpoint rows
+ *    (checkpoints / checkpoint_blobs / checkpoint_writes have no FK to
+ *    auth.users, so they don't cascade).
+ * 2. Load all file-type data sources → delete their stored files (Vercel
+ *    Blob / S3). Best-effort: log failures, don't abort.
+ * 3. Delete the auth.users row via the admin client. All application
+ *    tables (sessions, messages, artifacts, data_sources, user_settings,
+ *    usage_logs, schema_embeddings, charts) cascade-delete via their
+ *    `references auth.users (id) on delete cascade` FK.
+ * 4. Sign out (clears the local session cookie).
+ *
+ * This action is irreversible. The user is redirected to /login afterward.
+ */
+export async function deleteAccount() {
+  const supabase = await createClient();
+  const admin = createAdminClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  // 1. Delete LangGraph checkpoints for all the user's sessions.
+  //    thread_id = session_id; these tables have no FK to auth.users.
+  try {
+    const { data: sessions } = await admin
+      .from("sessions")
+      .select("id")
+      .eq("user_id", user.id);
+    if (sessions && sessions.length > 0) {
+      const threadIds = sessions.map((s) => s.id as string);
+      await admin.from("checkpoints").delete().in("thread_id", threadIds);
+      await admin.from("checkpoint_blobs").delete().in("thread_id", threadIds);
+      await admin.from("checkpoint_writes").delete().in("thread_id", threadIds);
+    }
+  } catch (err) {
+    console.error(
+      `[deleteAccount] failed to clean up LangGraph checkpoints for user ${user.id}:`,
+      err,
+    );
+  }
+
+  // 2. Delete stored files for all file-type data sources.
+  //    DB-type sources (pg/mysql/bigquery) have no external file to remove.
+  try {
+    const { data: dataSources } = await admin
+      .from("data_sources")
+      .select("type, meta")
+      .eq("user_id", user.id);
+    if (dataSources && dataSources.length > 0) {
+      for (const ds of dataSources) {
+        const isFileType =
+          ds.type === "file" || ds.type === "duckdb" || ds.type === "sqlite";
+        if (!isFileType) continue;
+        const meta = (ds.meta ?? {}) as Record<string, unknown>;
+        try {
+          await deleteStorageFile(meta, user.id);
+        } catch (err) {
+          console.error(
+            `[deleteAccount] failed to delete storage file for data source:`,
+            err,
+          );
+        }
+      }
+    }
+  } catch (err) {
+    console.error(
+      `[deleteAccount] failed to load data sources for user ${user.id}:`,
+      err,
+    );
+  }
+
+  // 3. Delete the auth.users row — cascades to all application tables.
+  const { error } = await admin.auth.admin.deleteUser(user.id);
+  if (error) throw error;
+
+  // 4. Clear the local session cookie.
+  await supabase.auth.signOut();
+
+  revalidatePath("/");
+}

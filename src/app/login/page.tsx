@@ -2,6 +2,7 @@
 
 import { useState, useRef, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { ArrowRight, RotateCcw, CheckCircle2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   const turnstileResetRef = useRef<(() => void) | null>(null);
 
@@ -57,6 +59,10 @@ export default function LoginPage() {
   /* ------------------------------------------------------------------ */
   function handleSignUpFormSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!agreedToTerms) {
+      toast.error("Please agree to the Terms of Service and Privacy Policy to continue.");
+      return;
+    }
     setSignupStep("turnstile");
   }
 
@@ -386,9 +392,44 @@ export default function LoginPage() {
                   />
                 </div>
 
+                {/* Agreement checkbox — required before sending verification code */}
+                <label
+                  className="flex cursor-pointer items-start gap-2 text-xs text-muted-foreground"
+                  style={INTER}
+                >
+                  <input
+                    type="checkbox"
+                    checked={agreedToTerms}
+                    onChange={(e) => setAgreedToTerms(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-primary"
+                  />
+                  <span>
+                    I have read and agree to the{" "}
+                    <Link
+                      href="/legal/terms"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-primary underline-offset-4 hover:underline"
+                    >
+                      Terms of Service
+                    </Link>{" "}
+                    and{" "}
+                    <Link
+                      href="/legal/privacy"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-primary underline-offset-4 hover:underline"
+                    >
+                      Privacy Policy
+                    </Link>
+                    .
+                  </span>
+                </label>
+
                 <Button
                   type="submit"
                   size="lg"
+                  disabled={!agreedToTerms}
                   className="mt-2 h-11 w-full font-medium"
                   style={INTER}
                 >

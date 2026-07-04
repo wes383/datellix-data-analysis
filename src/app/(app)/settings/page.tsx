@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { decryptConfig } from "@/lib/db/crypto";
 import { SettingsForm } from "@/components/settings/settings-form";
+import { DeleteAccountButton } from "@/components/settings/delete-account-button";
 import { normalizeLlmConfig, type LlmConfig, type StorageConfig } from "@/lib/db/schema";
 import { signOut } from "@/app/actions/sessions";
 import { LogOut } from "lucide-react";
@@ -78,6 +80,27 @@ export default async function SettingsPage() {
               Sign out
             </Button>
           </form>
+
+          {/* Danger zone — irreversible account deletion */}
+          <div className="mt-4 border-t border-border pt-4">
+            <DeleteAccountButton />
+          </div>
+        </div>
+
+        {/* Legal — Terms & Privacy */}
+        <div className="mt-6 flex items-center justify-center gap-4 text-xs text-muted-foreground">
+          <Link
+            href="/legal/terms"
+            className="transition-colors hover:text-foreground"
+          >
+            Terms of Service
+          </Link>
+          <Link
+            href="/legal/privacy"
+            className="transition-colors hover:text-foreground"
+          >
+            Privacy Policy
+          </Link>
         </div>
       </div>
     </div>

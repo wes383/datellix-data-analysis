@@ -71,8 +71,9 @@ interface StreamMessage {
   tool_call?: { id: string; name: string; code?: string };
   // Tool finished executing
   tool_result?: { id: string; name: string; content: string };
-  // Intermediate progress for a long-running tool (e.g. run_python code preview)
-  tool_progress?: { id: string; name: string; type: string; code?: string };
+  // Intermediate progress for a long-running tool.
+  //   - type: "code"  → run_python source code (attached once, early)
+  tool_progress?: { id: string; name: string; type: string; code?: string; text?: string };
   // Artifact produced by a content_and_artifact tool
   artifact?: ArtifactView;
   toolCallId?: string;
@@ -384,8 +385,11 @@ export function Chat({
                 (it): it is Extract<PendingItem, { kind: "tool" }> =>
                   it.kind === "tool" && it.id === tp.id,
               );
-              if (existing && tp.code) {
-                existing.code = tp.code;
+              if (existing) {
+                if (tp.code) {
+                  // run_python code preview
+                  existing.code = tp.code;
+                }
                 setPendingItems([...items]);
               }
             }

@@ -3,7 +3,7 @@ import { createServerClient } from "@supabase/ssr";
 
 /**
  * Auth middleware: refresh session + block unauthenticated access
- * - /login and static assets are allowed through
+ * - /login, /legal/*, and static assets are allowed through
  * - Other paths redirect to /login if not authenticated
  */
 export async function middleware(req: NextRequest) {
@@ -32,10 +32,14 @@ export async function middleware(req: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const isLoginPage = req.nextUrl.pathname.startsWith("/login");
+  const pathname = req.nextUrl.pathname;
+  const isLoginPage = pathname.startsWith("/login");
+  // Legal pages (Terms, Privacy) are public — linked from the signup flow
+  // and the settings page, so they must be reachable without auth.
+  const isLegalPage = pathname.startsWith("/legal");
 
   // Not authenticated and accessing protected path → redirect to login
-  if (!user && !isLoginPage) {
+  if (!user && !isLoginPage && !isLegalPage) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
