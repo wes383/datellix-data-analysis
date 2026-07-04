@@ -560,7 +560,7 @@ export async function POST(req: NextRequest) {
                 // Strip rows, keep columns + sql
                 dbPayload = { ...tp, rows: [] };
               }
-              // file / code / forecast / summary: unchanged
+              // file / code / forecast / summary / report: unchanged
               const { data: insertedArtifact, error: artifactInsertError } = await supabase
                 .from("artifacts")
                 .insert({

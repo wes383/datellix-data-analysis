@@ -15,11 +15,16 @@ import { Button } from "@/components/ui/button";
 import { RechartsRenderer } from "@/components/charts/recharts-renderer";
 import { PlotlyRenderer } from "@/components/charts/plotly-renderer";
 import { SaveChartDialog } from "@/components/library/save-chart-dialog";
+import { Markdown } from "@/components/chat/markdown";
+import { exportReportToPdf } from "@/lib/export/pdf";
+import { exportReportToMarkdownZip } from "@/lib/export/markdown-zip";
 import type {
+  Artifact,
   ChartPayload,
   CodePayload,
   FilePayload,
   ForecastPayload,
+  ReportPayload,
   SummaryPayload,
   TablePayload,
 } from "@/lib/agent/state";
@@ -35,7 +40,8 @@ export type ArtifactType =
   | "code"
   | "forecast"
   | "summary"
-  | "file";
+  | "file"
+  | "report";
 
 export interface ArtifactView {
   type: ArtifactType;
@@ -45,7 +51,8 @@ export interface ArtifactView {
     | CodePayload
     | FilePayload
     | SummaryPayload
-    | ForecastPayload;
+    | ForecastPayload
+    | ReportPayload;
   /** Source node that produced this artifact (for label) */
   node?: string;
 }
@@ -71,6 +78,7 @@ const ARTIFACT_META: Record<
   forecast: { label: "Forecast", icon: LineChart },
   summary: { label: "Summary", icon: FileText },
   file: { label: "File", icon: FileDown },
+  report: { label: "Report", icon: FileText },
 };
 
 /**
@@ -169,6 +177,110 @@ function DownloadMenu({
 }
 
 /**
+ * Download dropdown for report artifacts.
+ *
+ * Offers two export formats:
+ *   - PDF → opens the browser's print dialog (Save as PDF) via a hidden
+ *           iframe. Produces a real text-based PDF with selectable / copyable
+ *           text and native CJK support. Elements annotated with
+ *           `data-pdf-exclude` (e.g. the "References" footer) are stripped.
+ *   - Markdown → exports a .zip archive containing report.md + images/
+ *                folder (one PNG per embedded chart/forecast, screenshotted
+ *                from the live DOM). Tables/summaries/code are inlined as
+ *                their Markdown equivalent. This produces a portable,
+ *                self-contained archive viewable in any Markdown editor.
+ */
+function ReportDownloadMenu({
+  reportRef,
+  payload,
+}: {
+  reportRef: React.RefObject<HTMLDivElement | null>;
+  payload: ReportPayload;
+}) {
+  const [open, setOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  function handlePdf() {
+    setOpen(false);
+    if (!reportRef.current) return;
+    try {
+      const filename = sanitizeFilename(payload.title || "report");
+      exportReportToPdf(reportRef.current, filename);
+    } catch (err) {
+      console.error("[artifact] PDF export failed:", err);
+    }
+  }
+
+  async function handleMarkdownZip() {
+    if (exporting) return;
+    setOpen(false);
+    if (!reportRef.current) return;
+    setExporting(true);
+    try {
+      const filename = sanitizeFilename(payload.title || "report");
+      await exportReportToMarkdownZip(reportRef.current, payload, filename);
+    } catch (err) {
+      console.error("[artifact] Markdown ZIP export failed:", err);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <div ref={containerRef} className="relative ml-auto">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={exporting}
+        className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+        aria-label="Download"
+        title="Download"
+      >
+        {exporting ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Download className="h-3.5 w-3.5" />
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 min-w-[150px] overflow-hidden rounded-md border border-border bg-white p-1 shadow-lg">
+          <button
+            type="button"
+            onClick={handlePdf}
+            className="flex w-full cursor-pointer items-center px-2.5 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent"
+          >
+            PDF (.pdf)
+          </button>
+          <button
+            type="button"
+            onClick={handleMarkdownZip}
+            className="flex w-full cursor-pointer items-center px-2.5 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent"
+          >
+            Markdown (.zip)
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * Renders an artifact (chart / table / code / summary / file) inside a bordered card.
  * Used by the Chat component when streaming artifacts arrive from /api/chat.
  *
@@ -187,6 +299,8 @@ export function ArtifactRenderer({
 
   // Ref to the Recharts container DOM node, used for PNG export.
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  // Ref to the report container DOM node, used for PDF export.
+  const reportContainerRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
 
   // ---- Save-to-library (chart artifacts only) ----
@@ -290,8 +404,9 @@ export function ArtifactRenderer({
 
   // Table-like artifacts (table / file) show a multi-format download menu
   // (Excel / CSV / JSON). Chart-like artifacts (chart non-plotly / forecast)
-  // show a single PNG download button. Derive from the effective payload so
-  // rehydrated tables export their refreshed rows.
+  // show a single PNG download button. Report artifacts show a PDF/Markdown
+  // download menu. Derive from the effective payload so rehydrated tables
+  // export their refreshed rows.
   const tableExport =
     artifact.type === "table" || artifact.type === "file";
   const pngExport =
@@ -385,6 +500,12 @@ export function ArtifactRenderer({
             )}
           </button>
         )}
+        {artifact.type === "report" && (
+          <ReportDownloadMenu
+            reportRef={reportContainerRef}
+            payload={effectivePayload as ReportPayload}
+          />
+        )}
       </div>
 
       {/* Body */}
@@ -415,7 +536,7 @@ export function ArtifactRenderer({
             </Button>
           </div>
         ) : (
-          renderBody(effectiveArtifact, chartContainerRef)
+          renderBody(effectiveArtifact, chartContainerRef, reportContainerRef)
         )}
       </div>
 
@@ -448,6 +569,7 @@ export function ArtifactRenderer({
 function renderBody(
   artifact: ArtifactView,
   chartContainerRef: React.Ref<HTMLDivElement>,
+  reportContainerRef: React.Ref<HTMLDivElement>,
 ): React.ReactNode {
   switch (artifact.type) {
     case "chart": {
@@ -484,6 +606,14 @@ function renderBody(
 
     case "summary":
       return <SummaryArtifactView payload={artifact.payload as SummaryPayload} />;
+
+    case "report":
+      return (
+        <ReportArtifactView
+          ref={reportContainerRef}
+          payload={artifact.payload as ReportPayload}
+        />
+      );
 
     default:
       return (
@@ -611,9 +741,12 @@ function SummaryArtifactView({ payload }: { payload: SummaryPayload }) {
   const { text, stats } = payload;
   return (
     <div>
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-        {text}
-      </p>
+      {/* Render as Markdown so analyze_insights output (with headings,
+          lists, tables) displays correctly. Plain-text summaries from
+          summarize_data also render fine (no Markdown syntax = plain text). */}
+      <div className="text-sm">
+        <Markdown content={text} />
+      </div>
       {stats && Object.keys(stats).length > 0 && (
         <dl className="mt-3 grid grid-cols-2 gap-2 border-t border-border pt-3 sm:grid-cols-3">
           {Object.entries(stats).map(([key, value]) => (
@@ -631,6 +764,252 @@ function SummaryArtifactView({ payload }: { payload: SummaryPayload }) {
     </div>
   );
 }
+
+/* ============================================================
+    Inline artifact (embedded in reports)
+    Renders any artifact type inline within a report's Markdown body.
+    Used when the LLM inserts {{artifact:ID}} markers — the Markdown
+    component calls renderArtifact(id), which looks up the artifact
+    in the report's embeddedArtifacts list and delegates to this
+    component. Reuses the same sub-views as the standalone renderer.
+    ============================================================ */
+
+function InlineArtifactView({
+  artifact,
+  id,
+}: {
+  artifact: Artifact;
+  id?: string;
+}) {
+  // data-artifact-id is used by the Markdown ZIP export to locate chart
+  // DOM nodes for PNG screenshots. Only set when id is provided.
+  const dataProps = id ? { "data-artifact-id": id } : {};
+  switch (artifact.type) {
+    case "chart": {
+      const payload = artifact.payload as ChartPayload;
+      if (payload.renderer === "plotly" && payload.plotlyFigure) {
+        return (
+          <div
+            {...dataProps}
+            className="rounded-lg border border-slate-200 p-3 bg-white"
+          >
+            <PlotlyRenderer
+              figure={payload.plotlyFigure}
+              title={payload.title}
+              hideControls
+            />
+          </div>
+        );
+      }
+      return (
+        <div
+          {...dataProps}
+          className="rounded-lg border border-slate-200 p-3 bg-white"
+        >
+          <RechartsRenderer spec={payload} />
+        </div>
+      );
+    }
+    case "table":
+      return (
+        <div
+          {...dataProps}
+          className="rounded-lg border border-slate-200 p-3 bg-white"
+        >
+          <TableArtifactView payload={artifact.payload as TablePayload} />
+        </div>
+      );
+    case "summary":
+      return (
+        <div
+          {...dataProps}
+          className="rounded-lg border border-slate-200 p-3 bg-white"
+        >
+          <SummaryArtifactView payload={artifact.payload as SummaryPayload} />
+        </div>
+      );
+    case "forecast":
+      return (
+        <div
+          {...dataProps}
+          className="rounded-lg border border-slate-200 p-3 bg-white"
+        >
+          <ForecastArtifactView payload={artifact.payload as ForecastPayload} />
+        </div>
+      );
+    case "file":
+      return (
+        <div
+          {...dataProps}
+          className="rounded-lg border border-slate-200 p-3 bg-white"
+        >
+          <FileArtifactView payload={artifact.payload as FilePayload} />
+        </div>
+      );
+    case "code":
+      return (
+        <div
+          {...dataProps}
+          className="rounded-lg border border-slate-200 p-3 bg-white"
+        >
+          <CodeArtifactView payload={artifact.payload as CodePayload} />
+        </div>
+      );
+    default:
+      return null;
+  }
+}
+
+/* ============================================================
+    Report artifact (generate_report tool)
+    Renders a Markdown report with optional metadata header. Forwards a
+    ref to the outer container so the parent ArtifactRenderer can print it
+    to PDF via the browser's native print engine (selectable text + CJK).
+    The "References" footer is annotated with `data-pdf-exclude` so it is
+    stripped from PDF output.
+    Embedded artifacts (charts/tables/summaries) are rendered inline at
+    {{artifact:ID}} marker positions via content preprocessing (split).
+    ============================================================ */
+
+const ReportArtifactView = forwardRef<
+  HTMLDivElement,
+  { payload: ReportPayload }
+>(function ReportArtifactView({ payload }, ref) {
+  const { content, title, metadata, referencedArtifactIds, embeddedArtifacts } = payload;
+
+  // Format generatedAt as a human-readable timestamp.
+  const generatedAtDisplay = metadata?.generatedAt
+    ? new Date(metadata.generatedAt).toLocaleString()
+    : null;
+
+  // Build a lookup map (id → artifact) for inline rendering. Embedded
+  // artifacts are full self-contained copies (chart data is NOT stripped),
+  // so inline rendering works even after the report is persisted and
+  // reloaded from chat history.
+  const embeddedMap = new Map<string, Artifact>();
+  if (embeddedArtifacts) {
+    for (const ea of embeddedArtifacts) {
+      embeddedMap.set(ea.id, ea.artifact);
+    }
+  }
+
+  // Preprocess the Markdown content: split by {{artifact:ID}} markers and
+  // render each segment separately. Text segments go through <Markdown>,
+  // marker segments are replaced by <InlineArtifactView>. This is more
+  // reliable than detecting markers inside react-markdown's `p` component
+  // override (children format varies across react-markdown versions).
+  //
+  // The split uses a capture group so markers are kept as separate array
+  // elements. The regex tolerates optional internal whitespace.
+  //
+  // Fallback: if embeddedArtifacts is non-empty but the content contains
+  // no markers (LLM listed IDs but forgot to insert {{artifact:ID}} in the
+  // Markdown body), append all embedded artifacts at the end so charts
+  // still appear in the report.
+  function renderReportContent(): React.ReactNode {
+    if (embeddedArtifacts && embeddedArtifacts.length > 0) {
+      const markerRe = /{{artifact:\s*\w+\s*}}/;
+      const hasMarkers = markerRe.test(content);
+
+      if (hasMarkers) {
+        const parts = content.split(/({{artifact:\s*\w+\s*}})/g);
+        return parts.map((part, i) => {
+          const match = part.match(/^{{artifact:\s*(\w+)\s*}}$/);
+          if (match) {
+            const id = match[1];
+            const a = embeddedMap.get(id);
+            if (a) {
+              return (
+                <div key={i} className="my-4">
+                  <InlineArtifactView artifact={a} id={id} />
+                </div>
+              );
+            }
+            // Marker found but artifact data missing — show a placeholder
+            // so the user can see something went wrong (and where).
+            return (
+              <p key={i} className="my-2 text-sm italic text-slate-400">
+                [artifact:{id} not available]
+              </p>
+            );
+          }
+          // Text segment — render as Markdown. Skip empty/whitespace-only
+          // parts to avoid extra spacing between adjacent markers.
+          if (part.trim()) {
+            return <Markdown key={i} content={part} />;
+          }
+          return null;
+        });
+      }
+
+      // Fallback: no markers in content but embeddedArtifacts exist.
+      // Render the Markdown body, then append all embedded artifacts.
+      return (
+        <>
+          <Markdown content={content} />
+          {embeddedArtifacts.map((ea) => (
+            <div key={ea.id} className="my-4">
+              <InlineArtifactView artifact={ea.artifact} id={ea.id} />
+            </div>
+          ))}
+        </>
+      );
+    }
+    // No embedded artifacts — render the whole content as Markdown.
+    return <Markdown content={content} />;
+  }
+
+  return (
+    <div
+      ref={ref}
+      // Plain white background + explicit colors so the browser's print
+      // engine produces a clean PDF (Tailwind oklch()/hsl() CSS variables
+      // can resolve oddly in the print iframe's fresh document context).
+      style={{ backgroundColor: "#ffffff", color: "#0f172a" }}
+      className="rounded-md p-2"
+    >
+      {/* Report header */}
+      <div className="mb-4 border-b border-slate-200 pb-3">
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+          {title}
+        </h1>
+        {metadata?.subtitle && (
+          <p className="mt-1 text-sm text-slate-600">{metadata.subtitle}</p>
+        )}
+        {(generatedAtDisplay || (metadata?.dataSourceNames && metadata.dataSourceNames.length > 0)) && (
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+            {generatedAtDisplay && (
+              <span>Generated: {generatedAtDisplay}</span>
+            )}
+            {metadata?.dataSourceNames && metadata.dataSourceNames.length > 0 && (
+              <span>Data sources: {metadata.dataSourceNames.join(", ")}</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Report body — {{artifact:ID}} markers are split out and replaced
+          by inline artifact rendering; text segments render as Markdown. */}
+      <div className="report-body">
+        {renderReportContent()}
+      </div>
+
+      {/* Referenced artifacts footer (informational, on-screen only —
+          excluded from PDF export via data-pdf-exclude) */}
+      {referencedArtifactIds && referencedArtifactIds.length > 0 && (
+        <div
+          data-pdf-exclude
+          className="mt-6 border-t border-slate-200 pt-3 text-xs text-slate-500"
+        >
+          <span className="font-mono uppercase tracking-wider">
+            References
+          </span>
+          : {referencedArtifactIds.length} artifact(s)
+        </div>
+      )}
+    </div>
+  );
+});
 
 /* ============================================================
     Forecast artifact (Phase 2 §2.2)

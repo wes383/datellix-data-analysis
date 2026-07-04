@@ -18,14 +18,15 @@ import type { SchemaColumn } from "@/lib/agent/schema";
 
 /** Artifact types produced by the Agent tools (rendered by the frontend) */
 export interface Artifact {
-  type: "chart" | "table" | "code" | "summary" | "forecast" | "file";
+  type: "chart" | "table" | "code" | "summary" | "forecast" | "file" | "report";
   payload:
     | ChartPayload
     | TablePayload
     | CodePayload
     | SummaryPayload
     | ForecastPayload
-    | FilePayload;
+    | FilePayload
+    | ReportPayload;
 }
 
 export interface ChartPayload {
@@ -142,6 +143,58 @@ export interface ForecastPayload {
     forecast: number | null;
   }[];
   summary: string;
+}
+
+/**
+ * Report artifact produced by the generate_report tool.
+ *
+ * The agent LLM writes the full Markdown body itself (in the user's language)
+ * and passes it via the `markdownContent` tool argument; the tool just wraps
+ * it into this payload. The frontend renders `content` with react-markdown and
+ * offers a download menu (PDF via native print / Markdown).
+ *
+ * `embeddedArtifacts` carries full copies of in-session artifacts (charts,
+ * tables, summaries, …) that the LLM chose to embed inline. The LLM inserts
+ * `{{artifact:ID}}` markers in the Markdown body; the frontend detects these
+ * markers and renders the corresponding artifact at that position. Embedded
+ * artifacts are stored with full data so the report is a self-contained
+ * snapshot (chart data is NOT stripped, unlike standalone chart artifacts).
+ *
+ * `referencedArtifactIds` is an older informational list of in-session artifact
+ * IDs the report draws on. It is currently stored for traceability; PDF export
+ * prints the rendered Markdown body (the references footer is stripped via
+ * `data-pdf-exclude`).
+ */
+export interface ReportPayload {
+  /** Markdown body (LLM-generated). Rendered with react-markdown + remark-gfm.
+   *  May contain `{{artifact:ID}}` markers that are replaced by inline
+   *  artifact rendering on the frontend. */
+  content: string;
+  /** Report title (also used as the PDF filename). */
+  title: string;
+  /** Optional metadata shown in the report header. */
+  metadata?: {
+    author?: string;
+    subtitle?: string;
+    /** ISO timestamp string. The tool fills this with new Date().toISOString() if omitted. */
+    generatedAt?: string;
+    /** Names of the data sources the report is based on (filled by the tool from session context). */
+    dataSourceNames?: string[];
+  };
+  /** In-session artifact IDs the report references (informational). */
+  referencedArtifactIds?: string[];
+  /** Artifacts embedded inline in the Markdown body via {{artifact:ID}} markers.
+   *  Each entry pairs the marker ID with the full artifact data so the report
+   *  is a self-contained snapshot. */
+  embeddedArtifacts?: EmbeddedArtifact[];
+}
+
+/** A single artifact embedded in a report, keyed by its marker ID. */
+export interface EmbeddedArtifact {
+  /** The ID used in `{{artifact:ID}}` markers within the report Markdown. */
+  id: string;
+  /** The full artifact data (chart spec, table rows, summary text, …). */
+  artifact: Artifact;
 }
 
 /** SQL query results returned by the execute_sql tool / SQL executors */

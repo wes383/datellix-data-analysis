@@ -9,12 +9,16 @@ import { runPython, type SandboxProvider } from "@/lib/daytona/client";
 import { retrieveSchema, retrieveSchemaMulti, type SchemaColumn } from "@/lib/agent/schema";
 import { downloadStorageFile } from "@/lib/storage/resolver";
 import { logUsage } from "@/lib/usage";
+import { createLLM } from "@/lib/agent/llm";
+import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import type {
   SqlResults,
   ChartPayload,
   SummaryPayload,
   ForecastPayload,
   FilePayload,
+  ReportPayload,
+  EmbeddedArtifact,
   Artifact,
 } from "@/lib/agent/state";
 import type {
@@ -24,6 +28,7 @@ import type {
   BigQueryConfig,
   DuckdbFileConfig,
   SqliteFileConfig,
+  LlmConfig,
 } from "@/lib/db/schema";
 
 /**
@@ -756,6 +761,43 @@ export interface AgentContext {
    * each `runPython` call falls back to ephemeral create+delete.
    */
   getSandbox?: SandboxProvider;
+  /**
+   * User-provided LLM config (per-user settings). Used by the
+   * analyze_insights tool to make a secondary LLM call that interprets the
+   * sandbox-computed statistics into Markdown insight text. When omitted,
+   * analyze_insights falls back to project-level env LLM (createLLM()).
+   */
+  llmConfig?: LlmConfig | null;
+  /** Model override from the chat UI (which model in llmConfig.models to use). */
+  model?: string;
+  /**
+   * In-session artifact registry. Every artifact produced in this ReAct turn
+   * is registered here with a stable ID (art_1, art_2, …). The
+   * `generate_report` tool looks up IDs here to embed artifacts inline in
+   * reports. The ID is also appended to each tool's result string as
+   * `[artifact:ID]` so the LLM knows which ID to reference.
+   */
+  artifacts: Map<string, Artifact>;
+  /** Counter for generating sequential artifact IDs (art_1, art_2, …). */
+  artifactCounter: number;
+}
+
+/**
+ * Register an artifact in the session registry and return the
+ * `[string, Artifact]` tuple that artifact-producing tools expect.
+ *
+ * The artifact is stored in `ctx.artifacts` under a new ID (`art_N`), and
+ * the ID is appended to the summary string as ` [artifact:art_N]` so the
+ * LLM can reference it in `generate_report` via `{{artifact:art_N}}` markers.
+ */
+function registerArtifact(
+  ctx: AgentContext,
+  artifact: Artifact,
+  summary: string,
+): [string, Artifact] {
+  const id = `art_${++ctx.artifactCounter}`;
+  ctx.artifacts.set(id, artifact);
+  return [`${summary} [artifact:${id}]`, artifact];
 }
 
 /** Human-readable SQL dialect label, derived from the data source type. */
@@ -1002,7 +1044,7 @@ export async function createAgentTools(
             sql: results.sql,
           },
         };
-        return [text, artifact] as [string, Artifact];
+        return registerArtifact(ctx, artifact, text);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return [
@@ -1176,7 +1218,7 @@ export async function createAgentTools(
           type: "chart",
           payload: { ...chartPayload, sql },
         };
-        return [text, artifact] as [string, Artifact];
+        return registerArtifact(ctx, artifact, text);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return [`Build chart failed: ${msg}\nSQL: ${sql}`, null] as [string, null];
@@ -1782,6 +1824,337 @@ print(figure_json)
     },
   );
 
+  // ----------------------------------------------------------
+  // Tool 11: analyze_insights (returns a summary artifact with Markdown insight text)
+  // ----------------------------------------------------------
+  // Runs pandas-based statistical analysis (describe / IQR outliers / trend
+  // over time / top-N) in the sandbox, then makes a secondary LLM call to
+  // interpret the stats into a structured Markdown insight report with
+  // trend / anomaly / cause / recommendation sections. The output reuses
+  // the SummaryPayload type so no DB migration is needed; the frontend
+  // renders it with react-markdown.
+  // ----------------------------------------------------------
+  const analyzeInsightsTool = tool(
+    async ({ sql, analysisType, focus, title }) => {
+      const validation = validateSelectSql(sql);
+      if (!validation.ok) {
+        return [
+          `SQL validation failed: ${validation.reason}\nSQL: ${sql}`,
+          null,
+        ] as [string, null];
+      }
+      try {
+        const results = await runSql(sql);
+        const dataJson = JSON.stringify({
+          columns: results.columns,
+          rows: results.rows.slice(0, MAX_ROWS),
+        });
+
+        // Python: compute describe + IQR outliers + trend (if a time-like
+        // column exists) + top-N categoricals. Output as JSON.
+        const pyCode = `
+import pandas as pd, json, sys
+
+data = ${JSON.stringify(dataJson)}
+parsed = json.loads(data)
+df = pd.DataFrame(parsed["rows"], columns=parsed["columns"])
+
+stats = {}
+anomalies = []
+trend = None
+
+# Describe + IQR for numeric columns
+for col in df.columns:
+    s = df[col]
+    if pd.api.types.is_numeric_dtype(s):
+        desc = s.describe()
+        stats[col] = {k: float(v) if pd.notna(v) else None for k, v in desc.items()}
+        if len(s.dropna()) > 10:
+            q1, q3 = s.quantile(0.25), s.quantile(0.75)
+            iqr = q3 - q1
+            lower = q1 - 1.5 * iqr
+            upper = q3 + 1.5 * iqr
+            outlier_count = int(((s < lower) | (s > upper)).sum())
+            if outlier_count > 0:
+                anomalies.append({"column": col, "outliers": outlier_count, "lower": float(lower), "upper": float(upper)})
+            # Trend: compare first half mean vs second half mean
+            mid = len(s) // 2
+            if mid > 0:
+                first_half = float(s.iloc[:mid].mean()) if pd.notna(s.iloc[:mid].mean()) else None
+                second_half = float(s.iloc[mid:].mean()) if pd.notna(s.iloc[mid:].mean()) else None
+                if first_half is not None and second_half is not None and first_half != 0:
+                    pct_change = ((second_half - first_half) / abs(first_half)) * 100
+                    stats[col]["first_half_mean"] = first_half
+                    stats[col]["second_half_mean"] = second_half
+                    stats[col]["pct_change"] = float(pct_change)
+    else:
+        vc = s.value_counts().head(5)
+        stats[col] = {"unique": int(s.nunique()), "top": {str(k): int(v) for k, v in vc.items()}}
+
+# Top-N rows by first numeric column (for "biggest movers" insight)
+numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+top_rows = []
+if numeric_cols:
+    top_col = numeric_cols[0]
+    top_df = df.nlargest(5, top_col)[[c for c in df.columns if c in [top_col] or not pd.api.types.is_numeric_dtype(df[c])]]
+    top_rows = json.loads(top_df.to_json(orient="records"))
+
+result = {
+    "shape": list(df.shape),
+    "columns": list(df.columns),
+    "stats": stats,
+    "anomalies": anomalies,
+    "top_rows": top_rows,
+}
+print(json.dumps(result, default=str))
+`.trim();
+
+        const pyResult = await runPython(
+          ctx.sessionId,
+          pyCode,
+          { onUsage: onSandboxUsage, getSandbox: ctx.getSandbox },
+        );
+
+        // Build a context string for the LLM. If sandbox failed, fall back
+        // to a minimal context from the raw query results.
+        let statsContext: string;
+        let anomalyCount = 0;
+        if (pyResult.exitCode === 0) {
+          try {
+            const parsed = JSON.parse(pyResult.stdout) as {
+              shape: number[];
+              columns: string[];
+              stats: Record<string, unknown>;
+              anomalies: Array<Record<string, unknown>>;
+              top_rows: Record<string, unknown>[];
+            };
+            anomalyCount = parsed.anomalies.length;
+            statsContext = `Dataset: ${parsed.shape[0]} rows × ${parsed.shape[1]} columns (${parsed.columns.join(", ")})
+
+Statistics per column:
+${JSON.stringify(parsed.stats, null, 2)}
+
+Anomalies (IQR outliers):
+${parsed.anomalies.length === 0 ? "None detected." : JSON.stringify(parsed.anomalies, null, 2)}
+
+Top 5 rows (by first numeric column):
+${parsed.top_rows.length === 0 ? "(no numeric columns)" : JSON.stringify(parsed.top_rows, null, 2)}`;
+          } catch {
+            statsContext = `Raw query preview (first 5 rows):\n${JSON.stringify(results.rows.slice(0, 5), null, 2)}`;
+          }
+        } else {
+          statsContext = `Sandbox analysis failed. Raw query preview (first 5 rows):\n${JSON.stringify(results.rows.slice(0, 5), null, 2)}`;
+        }
+
+        // Build the LLM prompt for insight interpretation.
+        const analysisTypeLabel: Record<string, string> = {
+          trend: "trend analysis (identify direction, velocity, and inflection points)",
+          anomaly: "anomaly detection (identify outliers and quantify their deviation)",
+          root_cause: "root cause analysis (hypothesize why the observed patterns occur)",
+          recommendation: "recommendations (suggest concrete data-driven actions)",
+          comprehensive: "comprehensive analysis covering trends, anomalies, causes, and recommendations",
+        };
+        const focusLine = focus ? `\n\nThe user is particularly interested in: ${focus}` : "";
+        const insightSystemPrompt = `You are a senior data analyst. Given the statistical analysis of a query result, write a structured Markdown insight report in the user's language.
+
+Focus on: ${analysisTypeLabel[analysisType] ?? analysisTypeLabel.comprehensive}.${focusLine}
+
+Format the report with these Markdown sections (omit a section only if the analysis type explicitly excludes it):
+## Trend
+## Anomalies
+## Likely Causes
+## Recommendations
+
+Be specific — cite actual numbers, column names, and row values from the statistics. Avoid generic statements. Use Markdown tables or bullet lists where helpful. Do NOT wrap the response in a code block.`;
+
+        const insightUserMsg = `Statistical analysis:\n\n${statsContext}\n\nWrite the insight report now.`;
+
+        // Make a secondary LLM call to interpret the stats.
+        let markdownText: string;
+        try {
+          const insightLlm = createLLM(ctx.llmConfig, ctx.model);
+          const response = await insightLlm.invoke([
+            new SystemMessage(insightSystemPrompt),
+            new HumanMessage(insightUserMsg),
+          ]);
+          // response.content may be string or array of content blocks; coerce to string.
+          const content = response.content;
+          markdownText = typeof content === "string"
+            ? content
+            : Array.isArray(content)
+              ? content.map((c) => (typeof c === "string" ? c : (c as { text?: string }).text ?? "")).join("")
+              : String(content);
+        } catch (err) {
+          // LLM call failed — fall back to a stats-only summary so the tool
+          // still produces something useful.
+          const msg = err instanceof Error ? err.message : String(err);
+          markdownText = `## Statistical Summary\n\n${statsContext}\n\n_(LLM interpretation failed: ${msg})_`;
+        }
+
+        const artifact: Artifact = {
+          type: "summary",
+          payload: {
+            text: markdownText,
+            stats: {
+              rowCount: results.rowCount,
+              columnCount: results.columns.length,
+              anomalyCount,
+            },
+          },
+        };
+        const header = title ? `${title}\n\n` : "";
+        return registerArtifact(
+          ctx,
+          artifact,
+          `${header}Insights generated (${analysisType}). See the rendered summary.`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return [`Analyze insights failed: ${msg}\nSQL: ${sql}`, null] as [string, null];
+      }
+    },
+    {
+      name: "analyze_insights",
+      description:
+        "Run a SELECT query, compute statistics (describe, IQR outliers, trend, top-N) in the sandbox, " +
+        "then use the LLM to interpret the stats into a structured Markdown insight report with " +
+        "trend / anomaly / cause / recommendation sections. Use this when the user asks for business " +
+        "insights, trend analysis, anomaly detection, root-cause analysis, or recommendations. " +
+        "analysisType: trend | anomaly | root_cause | recommendation | comprehensive. " +
+        "focus: optional free-text describing what the user cares about most (e.g. 'Q3 revenue drop'). " +
+        "Returns the insight Markdown as a summary artifact.",
+      schema: z.object({
+        sql: z.string().describe("The read-only SELECT SQL whose results should be analyzed."),
+        analysisType: z
+          .enum(["trend", "anomaly", "root_cause", "recommendation", "comprehensive"])
+          .describe("Type of analysis to emphasize."),
+        focus: z
+          .string()
+          .optional()
+          .describe("Optional free-text focus area (e.g. 'why Q3 revenue dropped')."),
+        title: z
+          .string()
+          .optional()
+          .describe("Optional title shown above the insight report."),
+      }),
+      responseFormat: "content_and_artifact" as const,
+    },
+  );
+
+  // ----------------------------------------------------------
+  // Tool 12: generate_report (returns a report artifact)
+  // ----------------------------------------------------------
+  // The agent LLM writes the full Markdown body itself (in the user's
+  // language) and passes it via markdownContent. The tool wraps it into a
+  // ReportPayload, optionally fetching data source names for metadata.
+  // The frontend renders the report with react-markdown and offers a
+  // download menu (PDF via native print / Markdown).
+  // ----------------------------------------------------------
+  const generateReportTool = tool(
+    async ({ title, markdownContent, subtitle, referencedArtifactIds, embeddedArtifactIds, includeDataSources }) => {
+      try {
+        // Optionally fetch data source names for the metadata header.
+        let dataSourceNames: string[] | undefined;
+        if (includeDataSources) {
+          const idsToQuery =
+            ctx.dataSourceType === "file" && ctx.fileDataSourceIds.length > 0
+              ? ctx.fileDataSourceIds
+              : ctx.dataSourceId
+                ? [ctx.dataSourceId]
+                : [];
+          if (idsToQuery.length > 0) {
+            const { data: dsRows } = await admin
+              .from("data_sources")
+              .select("name")
+              .in("id", idsToQuery);
+            if (dsRows && dsRows.length > 0) {
+              dataSourceNames = dsRows.map((r) => r.name as string);
+            }
+          }
+        }
+
+        // Look up embedded artifacts by ID from the session registry.
+        // Each artifact-producing tool in this turn registered its artifact
+        // with an ID like "art_3" and appended [artifact:art_3] to its result
+        // string. The LLM uses {{artifact:art_3}} markers in the Markdown body
+        // to position them; here we attach the full artifact data so the
+        // frontend can render them inline.
+        const embeddedArtifacts: EmbeddedArtifact[] = [];
+        if (embeddedArtifactIds && embeddedArtifactIds.length > 0) {
+          for (const id of embeddedArtifactIds) {
+            const a = ctx.artifacts.get(id);
+            if (a) {
+              embeddedArtifacts.push({ id, artifact: a });
+            }
+          }
+        }
+
+        const payload: ReportPayload = {
+          title,
+          content: markdownContent,
+          metadata: {
+            subtitle,
+            generatedAt: new Date().toISOString(),
+            ...(dataSourceNames && dataSourceNames.length > 0 ? { dataSourceNames } : {}),
+          },
+          referencedArtifactIds: referencedArtifactIds && referencedArtifactIds.length > 0
+            ? referencedArtifactIds
+            : undefined,
+          ...(embeddedArtifacts.length > 0 ? { embeddedArtifacts } : {}),
+        };
+
+        const artifact: Artifact = { type: "report", payload };
+        return [`Report "${title}" generated.`, artifact] as [string, Artifact];
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return [`Generate report failed: ${msg}`, null] as [string, null];
+      }
+    },
+    {
+      name: "generate_report",
+      description:
+        "Generate a Markdown report artifact. You write the full Markdown body yourself (in the user's language) " +
+        "and pass it via markdownContent; the tool wraps it into a report artifact that the frontend renders with " +
+        "react-markdown and offers a download menu (PDF / Markdown). " +
+        "To embed charts/tables/summaries produced earlier in this session, insert {{artifact:ID}} markers " +
+        "in the markdownContent at the desired positions and list the IDs in embeddedArtifactIds. The IDs are " +
+        "shown in prior tool results as [artifact:ID] tags. " +
+        "Use this when the user asks to generate a report, document, or written summary. " +
+        "You decide what else to include — SQL snippets, result previews, metadata (subtitle, data sources). " +
+        "Write in the user's language.",
+      schema: z.object({
+        title: z.string().describe("Report title (also used as the PDF filename)."),
+        markdownContent: z
+          .string()
+          .describe(
+            "The full Markdown body of the report. Write it yourself in the user's language. " +
+            "To embed an in-session artifact (chart/table/summary/etc.) inline, insert a " +
+            "{{artifact:ID}} marker on its own line at the desired position. The ID comes " +
+            "from the [artifact:ID] tag in the producing tool's result.",
+          ),
+        subtitle: z.string().optional().describe("Optional subtitle shown in the report header."),
+        embeddedArtifactIds: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "IDs of in-session artifacts to embed inline in the report. Each ID must match a " +
+            "[artifact:ID] tag from a prior tool result in this turn. For each ID, insert a " +
+            "corresponding {{artifact:ID}} marker in markdownContent at the position where the " +
+            "artifact should appear.",
+          ),
+        referencedArtifactIds: z
+          .array(z.string())
+          .optional()
+          .describe("Optional list of in-session artifact IDs the report references (informational, not embedded)."),
+        includeDataSources: z
+          .boolean()
+          .optional()
+          .describe("If true, include the bound data source names in the report metadata header."),
+      }),
+      responseFormat: "content_and_artifact" as const,
+    },
+  );
+
   return [
     listTablesTool,
     retrieveSchemaTool,
@@ -1793,6 +2166,8 @@ print(figure_json)
     runForecastTool,
     runClusterTool,
     buildPlotlyChartTool,
+    analyzeInsightsTool,
+    generateReportTool,
   ];
 }
 

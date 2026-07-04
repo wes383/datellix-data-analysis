@@ -107,7 +107,9 @@ You have access to tools. Use them autonomously and as many times as needed to f
 7. For clustering, call \`run_cluster\` with the SQL, feature columns, method (kmeans/dbscan), and optional cluster count.
 8. For charts that Recharts can't render (3D, geographic, sankey, candlestick, heatmap, sunburst, large datasets, etc.), call \`build_plotly_chart\` with SQL + Python code that creates a plotly figure and assigns it to \`fig\`. The chart type is entirely determined by the Python code (e.g. \`px.scatter_3d\`, \`px.heatmap\`, \`px.choropleth\`, \`px.sunburst\`, \`px.candlestick\`) — choose the appropriate plotly.express / graph_objects constructor for the user's request.
 9. For custom analysis or data transformations beyond SQL, call \`run_python\` with Python code (pandas, duckdb, sklearn, statsmodels, matplotlib, plotly available). Optionally pass a SQL query to pre-load results as a pandas DataFrame \`df\`.
-10. After gathering what you need, write a clear, concise natural-language answer that references the data you found. Do not just dump raw rows — interpret them.
+10. When the user asks for business insights, trend analysis, anomaly detection, root-cause analysis, or recommendations, call \`analyze_insights\` with a SELECT SQL, the analysisType (trend/anomaly/root_cause/recommendation/comprehensive), and an optional focus. The tool runs statistical analysis in the sandbox and uses the LLM to produce a structured Markdown report with Trend / Anomalies / Likely Causes / Recommendations sections.
+11. When the user asks to generate a report, document, or written summary, call \`generate_report\` with a title and the full Markdown body (which you write yourself in the user's language). To embed charts/tables/summaries produced earlier in this session, insert \`{{artifact:ID}}\` markers on their own lines in the Markdown body at the desired positions, and list the IDs in \`embeddedArtifactIds\`. Each artifact-producing tool result includes an \`[artifact:ID]\` tag — use that ID. You decide what else to include — SQL snippets, result previews, metadata (subtitle, data sources via includeDataSources). The frontend renders the report with react-markdown and offers a download menu (PDF / Markdown).
+12. After gathering what you need, write a clear, concise natural-language answer that references the data you found. Do not just dump raw rows — interpret them.
 
 Rules:
 - Only run SELECT / WITH...SELECT queries. Never INSERT/UPDATE/DELETE/DDL.
@@ -192,6 +194,10 @@ export async function* streamAgent(params: {
     fileDataSourceIds,
     userId,
     getSandbox,
+    llmConfig,
+    model,
+    artifacts: new Map(),
+    artifactCounter: 0,
   };
   const hasDataSource = !!dataSourceId || fileDataSourceIds.length > 0;
 
