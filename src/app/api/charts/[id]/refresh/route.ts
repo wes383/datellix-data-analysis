@@ -145,6 +145,7 @@ print(figure_json)
       return NextResponse.json({ plotlyFigure: figure });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[charts/refresh] Plotly chart ${chartId} failed:`, err);
       return NextResponse.json(
         { error: `Failed to refresh Plotly chart: ${msg}` },
         { status: 500 },
@@ -163,6 +164,7 @@ print(figure_json)
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[charts/refresh] Recharts chart ${chartId} failed:`, err);
     return NextResponse.json(
       { error: `Failed to refresh chart data: ${msg}` },
       { status: 500 },

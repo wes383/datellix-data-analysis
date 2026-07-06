@@ -1,31 +1,24 @@
-import type { Metadata } from "next";
 import "./globals.css";
-import { Toaster } from "sonner";
+import type { ReactNode } from "react";
 
-export const metadata: Metadata = {
-  title: "Datellix — AI Data Analysis Agent",
-  description:
-    "Serverless AI data analysis agent: upload data, ask questions in natural language, get SQL, charts, and insights.",
-};
-
+/**
+ * Root layout — minimal HTML shell.
+ *
+ * The locale-aware layout (with NextIntlClientProvider, Toaster, etc.) lives
+ * in `src/app/[locale]/layout.tsx`. This root layout only sets the html/body
+ * scaffolding so the [locale] segment can render its own providers.
+ *
+ * The `lang` attribute is set dynamically by the [locale] layout via
+ * `setRequestLocale` + the html element being rendered there. We set a
+ * default of `en` here as a fallback before the locale layout runs.
+ */
 export default function RootLayout({
   children,
-}: Readonly<{ children: React.ReactNode }>) {
+}: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen bg-background font-sans text-foreground antialiased">
         {children}
-        <Toaster
-          position="top-right"
-          theme="light"
-          toastOptions={{
-            style: {
-              background: "hsl(0 0% 100%)",
-              border: "1px solid hsl(0 0% 89.8%)",
-              color: "hsl(0 0% 3.9%)",
-            },
-          }}
-        />
       </body>
     </html>
   );

@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { Link, useRouter } from "@/i18n/navigation";
+import { useTranslations, useFormatter } from "next-intl";
 import { toPng } from "html-to-image";
 import { ArrowLeft, Check, Code2, Download, Loader2, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -34,28 +34,44 @@ export interface ChartDetailData {
   data_sources: ChartDetailDataSource[];
 }
 
-const TYPE_LABELS: Record<string, string> = {
-  pg: "PostgreSQL",
-  mysql: "MySQL",
-  bigquery: "BigQuery",
-  duckdb: "DuckDB file",
-  sqlite: "SQLite file",
-  file: "File",
+/** Maps a data source type key to its translation message key (full labels). */
+const TYPE_LABEL_KEYS: Record<string, string> = {
+  pg: "typePostgres",
+  mysql: "typeMysql",
+  bigquery: "typeBigquery",
+  duckdb: "typeDuckdbFile",
+  sqlite: "typeSqliteFile",
+  file: "typeFile",
 };
 
-/** Chart type options for the Recharts renderer. */
-const CHART_TYPE_OPTIONS = [
-  { value: "bar", label: "Bar" },
-  { value: "line", label: "Line" },
-  { value: "area", label: "Area" },
-  { value: "pie", label: "Pie" },
-  { value: "scatter", label: "Scatter" },
-  { value: "radar", label: "Radar" },
-  { value: "radialBar", label: "Radial Bar" },
-  { value: "funnel", label: "Funnel" },
-  { value: "treemap", label: "Treemap" },
-  { value: "composed", label: "Composed" },
-];
+/** Chart type options for the Recharts renderer. Values are stored in spec;
+ *  labels are looked up via t() inside the component. */
+const CHART_TYPE_VALUES = [
+  "bar",
+  "line",
+  "area",
+  "pie",
+  "scatter",
+  "radar",
+  "radialBar",
+  "funnel",
+  "treemap",
+  "composed",
+] as const;
+
+/** Maps a chart type value to its translation message key. */
+const CHART_TYPE_LABEL_KEYS: Record<string, string> = {
+  bar: "chartTypeBar",
+  line: "chartTypeLine",
+  area: "chartTypeArea",
+  pie: "chartTypePie",
+  scatter: "chartTypeScatter",
+  radar: "chartTypeRadar",
+  radialBar: "chartTypeRadialBar",
+  funnel: "chartTypeFunnel",
+  treemap: "chartTypeTreemap",
+  composed: "chartTypeComposed",
+};
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -78,7 +94,23 @@ type SaveStatus = "idle" | "saving" | "saved" | "error";
  */
 export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
   const router = useRouter();
+  const t = useTranslations("Library");
+  const ts = useTranslations("Sources");
+  const tc = useTranslations("Common");
+  const format = useFormatter();
   const isPlotly = chart.renderer === "plotly";
+
+  function typeLabel(type: string): string {
+    const key = TYPE_LABEL_KEYS[type];
+    return key ? ts(key) : type;
+  }
+
+  function chartTypeOptions() {
+    return CHART_TYPE_VALUES.map((value) => ({
+      value,
+      label: t(CHART_TYPE_LABEL_KEYS[value] ?? value),
+    }));
+  }
 
   // ---- Inline edit state (title / description with debounced auto-save) ----
   const [title, setTitle] = useState(chart.title);
@@ -126,7 +158,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
         if (!res.ok) {
           const err = await res.json();
           throw new Error(
-            (err as { error?: string }).error || `Failed: ${res.status}`,
+            (err as { error?: string }).error || tc("failedStatus", { status: res.status }),
           );
         }
         lastSavedRef.current = { title, description };
@@ -138,7 +170,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
         setTimeout(() => setSaveStatus("idle"), 2000);
       } catch (err) {
         setSaveStatus("error");
-        const msg = err instanceof Error ? err.message : "Save failed";
+        const msg = err instanceof Error ? err.message : t("toastSaveFailed");
         toast.error(msg);
       }
     }, 800);
@@ -170,13 +202,13 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
       if (!res.ok) {
         const err = await res.json();
         throw new Error(
-          (err as { error?: string }).error || `Failed: ${res.status}`,
+          (err as { error?: string }).error || tc("failedStatus", { status: res.status }),
         );
       }
-      toast.success(`Chart type changed to ${newType}`);
+      toast.success(t("toastChartTypeChanged", { type: newType }));
       router.refresh();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Update failed";
+      const msg = err instanceof Error ? err.message : t("toastUpdateFailed");
       toast.error(msg);
       // Revert on failure
       setChartType(chartType);
@@ -206,14 +238,14 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
       if (!res.ok) {
         const err = await res.json();
         throw new Error(
-          (err as { error?: string }).error || `Failed: ${res.status}`,
+          (err as { error?: string }).error || tc("failedStatus", { status: res.status }),
         );
       }
-      toast.success("SQL updated — chart will re-query on next view");
+      toast.success(t("toastSqlUpdated"));
       setSqlOpen(false);
       router.refresh();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Update failed";
+      const msg = err instanceof Error ? err.message : t("toastUpdateFailed");
       toast.error(msg);
     } finally {
       setSqlSaving(false);
@@ -246,14 +278,14 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
       if (!res.ok) {
         const err = await res.json();
         throw new Error(
-          (err as { error?: string }).error || `Failed: ${res.status}`,
+          (err as { error?: string }).error || tc("failedStatus", { status: res.status }),
         );
       }
-      toast.success("Python code updated — click Refresh to regenerate");
+      toast.success(t("toastPythonUpdated"));
       setPythonOpen(false);
       router.refresh();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Update failed";
+      const msg = err instanceof Error ? err.message : t("toastUpdateFailed");
       toast.error(msg);
     } finally {
       setPythonSaving(false);
@@ -265,7 +297,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
 
   async function handleDelete() {
     if (deleting) return;
-    if (!confirm(`Delete chart "${chart.title}"? This cannot be undone.`))
+    if (!confirm(t("confirmDeleteChart", { title: chart.title })))
       return;
     setDeleting(true);
     try {
@@ -275,14 +307,14 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
       if (!res.ok) {
         const err = await res.json();
         throw new Error(
-          (err as { error?: string }).error || `Failed: ${res.status}`,
+          (err as { error?: string }).error || tc("failedStatus", { status: res.status }),
         );
       }
-      toast.success("Chart deleted");
+      toast.success(t("toastChartDeleted"));
       router.push("/library");
       router.refresh();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Delete failed";
+      const msg = err instanceof Error ? err.message : ts("toastDeleteFailed");
       toast.error(msg);
     } finally {
       setDeleting(false);
@@ -310,7 +342,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
           | HTMLElement
           | null;
         if (!plotlyDiv) {
-          throw new Error("Plotly chart not rendered yet");
+          throw new Error(t("toastPlotlyNotRendered"));
         }
         const filename =
           (chart.title ?? "chart").replace(/[^\w-]+/g, "_") || "chart";
@@ -335,7 +367,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
       }
     } catch (err) {
       console.error("[chart-detail] export failed:", err);
-      const msg = err instanceof Error ? err.message : "Export failed";
+      const msg = err instanceof Error ? err.message : t("toastExportFailed");
       toast.error(msg);
     } finally {
       setExporting(false);
@@ -350,7 +382,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
           <Button asChild variant="ghost" size="sm">
             <Link href="/library">
               <ArrowLeft className="h-4 w-4" />
-              Back to library
+              {t("backToLibrary")}
             </Link>
           </Button>
           <div className="flex items-center gap-1">
@@ -359,14 +391,14 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
               size="sm"
               onClick={handleDownload}
               disabled={exporting}
-              title="Download PNG"
+              title={t("downloadButton")}
             >
               {exporting ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Download className="h-4 w-4" />
               )}
-              Download
+              {t("downloadButton")}
             </Button>
             <Button
               variant="ghost"
@@ -380,7 +412,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
               ) : (
                 <Trash2 className="h-4 w-4" />
               )}
-              Delete
+              {t("deleteButton")}
             </Button>
           </div>
         </div>
@@ -403,50 +435,50 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
             <div className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-sm">
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Details
+                  {t("tabDetails")}
                 </span>
                 {saveStatus === "saving" && (
                   <span className="flex items-center gap-1 text-xs text-muted-foreground">
                     <Loader2 className="h-3 w-3 animate-spin" />
-                    Saving…
+                    {t("statusSaving")}
                   </span>
                 )}
                 {saveStatus === "saved" && (
                   <span className="flex items-center gap-1 text-xs text-green-600">
                     <Check className="h-3 w-3" />
-                    Saved
+                    {t("statusSaved")}
                   </span>
                 )}
                 {saveStatus === "error" && (
-                  <span className="text-xs text-destructive">Save failed</span>
+                  <span className="text-xs text-destructive">{t("statusSaveFailed")}</span>
                 )}
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="title">Title</Label>
+                <Label htmlFor="title">{t("labelTitle")}</Label>
                 <Input
                   id="title"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Chart title"
+                  placeholder={t("placeholderChartTitle")}
                 />
                 {!title.trim() && (
-                  <p className="text-xs text-destructive">Title is required</p>
+                  <p className="text-xs text-destructive">{t("errTitleRequired")}</p>
                 )}
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="description">Description</Label>
+                <Label htmlFor="description">{t("labelDescription")}</Label>
                 <Textarea
                   id="description"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Add a description..."
+                  placeholder={t("placeholderDescription")}
                   rows={3}
                 />
               </div>
               <p className="font-mono text-[10px] text-muted-foreground">
-                Changes are saved automatically.
+                {t("hintAutoSave")}
               </p>
             </div>
 
@@ -454,15 +486,15 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
             {!isPlotly && (
               <div className="space-y-3 rounded-lg border border-border bg-card p-4 shadow-sm">
                 <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Chart type
+                  {t("labelChartType")}
                 </span>
                 <Select
                   value={chartType}
-                  options={CHART_TYPE_OPTIONS}
+                  options={chartTypeOptions()}
                   onChange={(v) => handleChartTypeChange(v)}
                 />
                 <p className="font-mono text-[10px] text-muted-foreground">
-                  Changing the type re-renders the chart with the same data.
+                  {t("hintChartTypeChange")}
                 </p>
               </div>
             )}
@@ -473,7 +505,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
             <div className="space-y-3 rounded-lg border border-border bg-card p-4 shadow-sm">
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                  SQL query
+                  {t("labelSqlQuery")}
                 </span>
                 <Button
                   variant="outline"
@@ -481,17 +513,17 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
                   onClick={openSqlModal}
                 >
                   <Code2 className="h-3.5 w-3.5" />
-                  Edit SQL
+                  {t("buttonEditSql")}
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
                 {isPlotly
                   ? chart.sql_text
-                    ? "SQL feeds the Python figure build — click Refresh below the chart to regenerate."
-                    : "No SQL configured. The Python code needs a DataFrame; add a SQL query."
+                    ? t("hintSqlFeedsPython")
+                    : t("hintNoSqlNeedsDataframe")
                   : chart.sql_text
-                    ? "SQL is configured — the chart re-queries its bound data source on each view."
-                    : "No SQL configured. Click Edit SQL to add one."}
+                    ? t("hintSqlRequeries")
+                    : t("hintNoSqlClickEdit")}
               </p>
             </div>
 
@@ -500,7 +532,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
               <div className="space-y-3 rounded-lg border border-border bg-card p-4 shadow-sm">
                 <div className="flex items-center justify-between">
                   <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                    Python code
+                    {t("labelPythonCode")}
                   </span>
                   <Button
                     variant="outline"
@@ -508,13 +540,13 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
                     onClick={openPythonModal}
                   >
                     <Code2 className="h-3.5 w-3.5" />
-                    Edit Python
+                    {t("buttonEditPython")}
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {(chartPayload.pythonCode as string | undefined)
-                    ? "Python code is configured — click Refresh below the chart to regenerate the figure."
-                    : "No Python code stored. Charts saved before this feature won't have it."}
+                    ? t("hintPythonConfigured")
+                    : t("hintNoPythonStored")}
                 </p>
               </div>
             )}
@@ -522,11 +554,11 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
             {/* Bound data sources */}
             <div className="space-y-3 rounded-lg border border-border bg-card p-4 shadow-sm">
               <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                Bound data sources
+                {t("labelBoundDataSources")}
               </p>
               {chart.data_sources.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
-                  No data sources bound.
+                  {t("noDataSourcesBound")}
                 </p>
               ) : (
                 <ul className="space-y-1.5">
@@ -540,7 +572,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
                           {ds.name}
                         </span>
                         <span className="ml-2 shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                          {TYPE_LABELS[ds.type] ?? ds.type}
+                          {typeLabel(ds.type)}
                         </span>
                       </Link>
                     </li>
@@ -551,9 +583,9 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
                 className="font-mono text-[10px] text-muted-foreground"
                 suppressHydrationWarning
               >
-                Created {new Date(chart.created_at).toLocaleDateString()}
+                {tc("created")} {format.dateTime(new Date(chart.created_at), { dateStyle: "medium" })}
                 {" · "}
-                Updated {new Date(chart.updated_at).toLocaleDateString()}
+                {t("updatedLabel")} {format.dateTime(new Date(chart.updated_at), { dateStyle: "medium" })}
               </p>
             </div>
           </div>
@@ -569,7 +601,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
             <div className="w-full max-w-2xl rounded-lg border border-border bg-card p-6 shadow-lg">
               <div className="mb-4 flex items-center justify-between">
                 <h2 className="font-display text-base font-semibold tracking-tight">
-                  Edit SQL query
+                  {t("sqlModalTitle")}
                 </h2>
                 <button
                   type="button"
@@ -583,15 +615,13 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
                 <Textarea
                   value={sqlDraft}
                   onChange={(e) => setSqlDraft(e.target.value)}
-                  placeholder="SELECT ..."
+                  placeholder={t("placeholderSelect")}
                   rows={12}
                   className="font-mono text-xs"
                   autoFocus
                 />
                 <p className="font-mono text-[10px] text-muted-foreground">
-                  This SQL re-runs against the chart&apos;s bound data source
-                  on every view. Editing it changes how the chart refreshes
-                  its data.
+                  {t("hintSqlRequeries")}
                 </p>
               </div>
               <div className="mt-4 flex items-center justify-end gap-2">
@@ -600,7 +630,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
                   variant="outline"
                   onClick={() => setSqlOpen(false)}
                 >
-                  Cancel
+                  {tc("cancel")}
                 </Button>
                 <Button
                   type="button"
@@ -610,10 +640,10 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
                   {sqlSaving ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Saving…
+                      {tc("saving")}
                     </>
                   ) : (
-                    "Save SQL"
+                    t("buttonSaveSql")
                   )}
                 </Button>
               </div>
@@ -630,7 +660,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
             <div className="w-full max-w-2xl rounded-lg border border-border bg-card p-6 shadow-lg">
               <div className="mb-4 flex items-center justify-between">
                 <h2 className="font-display text-base font-semibold tracking-tight">
-                  Edit Python code
+                  {t("pythonModalTitle")}
                 </h2>
                 <button
                   type="button"
@@ -650,16 +680,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
                   autoFocus
                 />
                 <p className="font-mono text-[10px] text-muted-foreground">
-                  The code runs in a sandbox with a pandas DataFrame
-                  {" "}
-                  <code className="rounded bg-muted px-1 py-0.5">df</code>
-                  {" "}
-                  already populated from the SQL query. Assign your Plotly
-                  figure to a variable named
-                  {" "}
-                  <code className="rounded bg-muted px-1 py-0.5">fig</code>.
-                  Click &quot;Refresh from data source&quot; below the chart
-                  to regenerate the figure after editing.
+                  {t("pythonModalDescription")}
                 </p>
               </div>
               <div className="mt-4 flex items-center justify-end gap-2">
@@ -668,7 +689,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
                   variant="outline"
                   onClick={() => setPythonOpen(false)}
                 >
-                  Cancel
+                  {tc("cancel")}
                 </Button>
                 <Button
                   type="button"
@@ -678,18 +699,17 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
                   {pythonSaving ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Saving…
+                      {tc("saving")}
                     </>
                   ) : (
-                    "Save Python"
+                    t("buttonSavePython")
                   )}
                 </Button>
               </div>
             </div>
           </div>,
           document.body,
-        )}
-    </div>
+        )}    </div>
   );
 }
 

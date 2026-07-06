@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { ArrowDownToLine, ArrowUpFromLine, Clock } from "lucide-react";
+import { useTranslations, useFormatter, useLocale } from "next-intl";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -48,6 +49,9 @@ type Metric = "sandboxSeconds" | "tokens";
 const BAR_COLOR = "#10b981";
 
 export function UsageDashboard({ byDay, totals }: UsageDashboardProps) {
+  const t = useTranslations("Usage");
+  const format = useFormatter();
+  const locale = useLocale();
   const [metric, setMetric] = useState<Metric>("sandboxSeconds");
 
   // Aggregate byDay into one row per day (single summed value per metric).
@@ -97,13 +101,13 @@ export function UsageDashboard({ byDay, totals }: UsageDashboardProps) {
     <div className="mx-auto h-full max-w-5xl overflow-y-auto px-6 py-8">
       {/* Title */}
       <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">Usage</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Last 90 days</p>
+        <h1 className="text-2xl font-bold tracking-tight">{t("pageTitle")}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{t("rangeLast90Days")}</p>
       </div>
 
       {byDay.length === 0 ? (
         <div className="flex min-h-[200px] items-center justify-center rounded-lg border border-dashed border-border bg-card">
-          <p className="text-sm text-muted-foreground">No usage data yet.</p>
+          <p className="text-sm text-muted-foreground">{t("emptyState")}</p>
         </div>
       ) : (
         <>
@@ -111,37 +115,37 @@ export function UsageDashboard({ byDay, totals }: UsageDashboardProps) {
           <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
             <StatCard
               icon={<Clock className="h-4 w-4" />}
-              label="Total sandbox seconds"
+              label={t("metricTotalSandboxSeconds")}
               value={formatDuration(totals.sandboxSeconds)}
             />
             <StatCard
               icon={<ArrowDownToLine className="h-4 w-4" />}
-              label="Total tokens in"
-              value={formatNumber(totals.tokensIn)}
+              label={t("metricTotalTokensIn")}
+              value={formatNumber(totals.tokensIn, locale)}
             />
             <StatCard
               icon={<ArrowUpFromLine className="h-4 w-4" />}
-              label="Total tokens out"
-              value={formatNumber(totals.tokensOut)}
+              label={t("metricTotalTokensOut")}
+              value={formatNumber(totals.tokensOut, locale)}
             />
           </div>
 
           {/* Chart */}
           <Card className="mb-8">
             <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-base">Daily usage</CardTitle>
+              <CardTitle className="text-base">{t("chartDailyUsage")}</CardTitle>
               <div className="flex gap-1">
                 <MetricButton
                   active={metric === "sandboxSeconds"}
                   onClick={() => setMetric("sandboxSeconds")}
                 >
-                  Sandbox sec
+                  {t("metricSandboxSec")}
                 </MetricButton>
                 <MetricButton
                   active={metric === "tokens"}
                   onClick={() => setMetric("tokens")}
                 >
-                  Tokens
+                  {t("metricTokens")}
                 </MetricButton>
               </div>
             </CardHeader>
@@ -183,16 +187,16 @@ export function UsageDashboard({ byDay, totals }: UsageDashboardProps) {
           {/* Detail table */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Breakdown</CardTitle>
+              <CardTitle className="text-base">{t("sectionBreakdown")}</CardTitle>
             </CardHeader>
             <CardContent>
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Day</TableHead>
-                    <TableHead className="text-right">Sandbox sec</TableHead>
-                    <TableHead className="text-right">Tokens in</TableHead>
-                    <TableHead className="text-right">Tokens out</TableHead>
+                    <TableHead>{t("colDay")}</TableHead>
+                    <TableHead className="text-right">{t("colSandboxSec")}</TableHead>
+                    <TableHead className="text-right">{t("colTokensIn")}</TableHead>
+                    <TableHead className="text-right">{t("colTokensOut")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -200,13 +204,13 @@ export function UsageDashboard({ byDay, totals }: UsageDashboardProps) {
                     <TableRow key={`${r.day}-${i}`}>
                       <TableCell className="font-mono text-xs">{r.day}</TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {formatNumber(r.sandboxSeconds)}
+                        {formatNumber(r.sandboxSeconds, locale)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {formatNumber(r.tokensIn)}
+                        {formatNumber(r.tokensIn, locale)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {formatNumber(r.tokensOut)}
+                        {formatNumber(r.tokensOut, locale)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -276,7 +280,7 @@ function formatDuration(seconds: number): string {
   return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
-function formatNumber(n: number): string {
+function formatNumber(n: number, locale: string = "en"): string {
   if (!n) return "0";
-  return n.toLocaleString();
+  return new Intl.NumberFormat(locale).format(n);
 }

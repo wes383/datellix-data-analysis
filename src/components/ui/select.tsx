@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Check, ChevronDown } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 
 /**
@@ -52,6 +53,7 @@ export function Select({
   placeholder,
 }: SelectProps) {
   const [open, setOpen] = React.useState(false);
+  const t = useTranslations("Common");
   const [highlightedIdx, setHighlightedIdx] = React.useState(-1);
   // "below" renders the popover under the trigger; "above" renders it over
   // the trigger when there isn't enough space below.
@@ -197,7 +199,7 @@ export function Select({
         aria-expanded={open}
       >
         <span className={cn("truncate", !selected && "text-muted-foreground")}>
-          {selected ? selected.label : (placeholder ?? "Select…")}
+          {selected ? selected.label : (placeholder ?? t("selectDefault"))}
         </span>
         <ChevronDown
           className={cn(

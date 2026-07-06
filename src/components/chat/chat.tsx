@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import { ArrowUp, ChevronRight, Database, Loader2, Plus, Square, Wrench, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
@@ -146,6 +147,8 @@ export function Chat({
   availableModels = [],
 }: ChatProps) {
   const router = useRouter();
+  const t = useTranslations("Chat");
+  const tc = useTranslations("Common");
   // `sessionId` prop is "new" for a pending session (no DB row yet). The
   // first message (or file upload) creates the real session and we track
   // the resolved id here so subsequent actions use it.
@@ -286,7 +289,7 @@ export function Chat({
         setResolvedSessionId(session.id);
         isNewSession = true;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Failed to create session";
+        const msg = err instanceof Error ? err.message : t("toastFailedToCreateSession");
         toast.error(msg);
         return;
       }
@@ -345,7 +348,7 @@ export function Chat({
       });
       if (!res.ok || !res.body) {
         const errBody = await res.text();
-        throw new Error(errBody || `Request failed: ${res.status}`);
+        throw new Error(errBody || tc("failedStatus", { status: res.status }));
       }
 
       const reader = res.body.getReader();
@@ -478,7 +481,7 @@ export function Chat({
         }
         // No error toast for user-initiated abort.
       } else {
-        const msg = err instanceof Error ? err.message : "Streaming failed";
+        const msg = err instanceof Error ? err.message : t("toastStreamingFailed");
         toast.error(msg);
       }
     } finally {
@@ -516,12 +519,12 @@ export function Chat({
       );
       if (!res.ok) {
         const errBody = await res.text();
-        throw new Error(errBody || `Remove failed: ${res.status}`);
+        throw new Error(errBody || tc("failedStatus", { status: res.status }));
       }
-      toast.success("Data source disconnected");
+      toast.success(t("toastDataSourceDisconnected"));
       router.refresh();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Remove failed";
+      const msg = err instanceof Error ? err.message : t("toastRemoveFailed");
       toast.error(msg);
     } finally {
       setRemovingFileId(null);
@@ -605,7 +608,7 @@ export function Chat({
                   }
                 }
               }}
-              placeholder="Ask anything about your data…"
+              placeholder={t("composerPlaceholder")}
               autoFocus
               rows={1}
               className="max-h-[200px] flex-1 resize-none border-0 bg-transparent px-0 py-1.5 font-sans text-sm shadow-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
@@ -625,7 +628,7 @@ export function Chat({
                 size="icon"
                 onClick={handleStop}
                 className="h-8 w-8 shrink-0 self-end rounded-full p-0 font-medium"
-                aria-label="Stop"
+                aria-label={t("stopAriaLabel")}
               >
                 <Square className="h-3.5 w-3.5 fill-current" />
               </Button>
@@ -635,7 +638,7 @@ export function Chat({
                 size="icon"
                 disabled={!input.trim()}
                 className="h-8 w-8 shrink-0 self-end rounded-full p-0 font-medium"
-                aria-label="Send"
+                aria-label={t("sendAriaLabel")}
               >
                 <ArrowUp className="h-4 w-4" />
               </Button>
@@ -804,24 +807,6 @@ function attachInitialArtifacts(
     Data source status bar
     ============================================================ */
 
-/** Map an internal data source type to a human-readable label. */
-function dbTypeLabel(type: string): string {
-  switch (type) {
-    case "pg":
-      return "Postgres";
-    case "mysql":
-      return "MySQL";
-    case "bigquery":
-      return "BigQuery";
-    case "duckdb":
-      return "DuckDB";
-    case "sqlite":
-      return "SQLite";
-    default:
-      return type;
-  }
-}
-
 function DataSourceBar({
   sessionId,
   dataSource,
@@ -835,7 +820,20 @@ function DataSourceBar({
   removingFileId: string | null;
   existingSources: ExistingSource[];
 }) {
+  const t = useTranslations("Chat");
   const hasDataSource = !!dataSource;
+
+  /** Map an internal data source type to a human-readable label. */
+  function dbTypeLabel(type: string): string {
+    const map: Record<string, string> = {
+      pg: t("dbTypePostgres"),
+      mysql: t("dbTypeMysql"),
+      bigquery: t("dbTypeBigquery"),
+      duckdb: t("dbTypeDuckdb"),
+      sqlite: t("dbTypeSqlite"),
+    };
+    return map[type] ?? type;
+  }
 
   return (
     <div
@@ -858,7 +856,7 @@ function DataSourceBar({
                 type="button"
                 onClick={() => onRemoveFile(dataSource.data.id)}
                 disabled={removingFileId === dataSource.data.id}
-                aria-label={`Disconnect ${dataSource.data.name}`}
+                aria-label={t("disconnectNamedAriaLabel", { name: dataSource.data.name })}
                 className="ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
               >
                 {removingFileId === dataSource.data.id ? (
@@ -872,7 +870,7 @@ function DataSourceBar({
         ) : dataSource?.mode === "files" ? (
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
             <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-              {dataSource.files.length} file{dataSource.files.length === 1 ? "" : "s"}
+              {t("filesCountLabel", { count: dataSource.files.length })}
             </span>
             {dataSource.files.map((f) => {
               const isRemoving = removingFileId === f.id;
@@ -891,7 +889,7 @@ function DataSourceBar({
                     type="button"
                     onClick={() => onRemoveFile(f.id)}
                     disabled={isRemoving}
-                    aria-label={`Remove ${f.name}`}
+                    aria-label={t("removeNamedAriaLabel", { name: f.name })}
                     className="ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
                   >
                     {isRemoving ? (
@@ -906,7 +904,7 @@ function DataSourceBar({
           </div>
         ) : (
           <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-            No data source
+            {t("noDataSource")}
           </span>
         )}
       </div>
@@ -927,7 +925,7 @@ function DataSourceBar({
           trigger={
             <Button variant="outline" size="sm">
               <Plus className="h-3.5 w-3.5" />
-              Add data source
+              {t("addDataSource")}
             </Button>
           }
         />
@@ -955,6 +953,7 @@ function MessageRow({
   sessionId?: string;
   dataSourceIds?: string[];
 }) {
+  const t = useTranslations("Chat");
   const isUser = message.role === "user";
   const num = String(index + 1).padStart(2, "0");
   const artifacts = message.artifacts ?? [];
@@ -976,11 +975,11 @@ function MessageRow({
             isUser ? "text-primary" : "text-muted-foreground"
           }`}
         >
-          {isUser ? "You" : "Datellix"}
+          {isUser ? t("roleYou") : t("roleAssistant")}
         </span>
         {streaming && (
           <span className="font-mono text-[10px] uppercase tracking-wider text-primary animate-pulse-dot">
-            streaming
+            {t("statusStreaming")}
           </span>
         )}
       </div>
@@ -1214,6 +1213,7 @@ function ThinkingProcess({
 }: {
   items: { kind: "thinking"; content: string }[];
 }) {
+  const t = useTranslations("Chat");
   const [open, setOpen] = useState(false);
   return (
     <div className="border-l-2 border-primary/20 pl-4">
@@ -1228,10 +1228,10 @@ function ThinkingProcess({
           }`}
         />
         <span className="font-mono text-[10px] uppercase tracking-wider text-primary/70">
-          Thinking process
+          {t("thinkingProcess")}
         </span>
         <span className="font-mono text-[10px] text-muted-foreground/60">
-          {items.length} {items.length === 1 ? "step" : "steps"}
+          {items.length} {items.length === 1 ? t("stepLabel") : t("stepsLabel")}
         </span>
       </button>
       {open && (
@@ -1268,6 +1268,7 @@ function StreamingItemsView({
   sessionId?: string;
   dataSourceIds?: string[];
 }) {
+  const t = useTranslations("Chat");
   return (
     <div className="animate-fade-up space-y-4">
       <div className="mb-2 flex items-center gap-3">
@@ -1275,10 +1276,10 @@ function StreamingItemsView({
           {String(items.length).padStart(2, "0")}
         </span>
         <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-          Datellix
+          {t("roleAssistant")}
         </span>
         <span className="font-mono text-[10px] uppercase tracking-wider text-primary animate-pulse-dot">
-          streaming
+          {t("statusStreaming")}
         </span>
       </div>
 
@@ -1308,7 +1309,7 @@ function StreamingItemsView({
                   <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary/60 animate-pulse-dot" />
                   <div className="flex-1">
                     <span className="font-mono text-[10px] uppercase tracking-wider text-primary/70">
-                      thinking
+                      {t("statusThinking")}
                     </span>
                     <p className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
                       {item.content}
@@ -1361,16 +1362,17 @@ function StreamingItemsView({
     ============================================================ */
 
 function ThinkingIndicator() {
+  const t = useTranslations("Chat");
   return (
     <div className="animate-fade-up">
       <div className="mb-2 flex items-center gap-3">
         <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-          Datellix
+          {t("roleAssistant")}
         </span>
       </div>
       <div className="ml-7 flex items-center gap-1.5 border-l-2 border-border pl-4 text-muted-foreground">
         <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse-dot" />
-        <span className="font-mono text-xs">thinking…</span>
+        <span className="font-mono text-xs">{t("statusThinkingDots")}</span>
       </div>
     </div>
   );

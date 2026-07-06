@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
 import { setOtp, getOtp } from "@/lib/auth/otp-store";
+import { rateLimit, getClientIp, LIMITS, rateLimitHeaders } from "@/lib/ratelimit/limiter";
+import crypto from "node:crypto";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -45,11 +47,32 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Extract client IP (CF-Connecting-IP > X-Forwarded-For > X-Real-IP > 127.0.0.1)
+    const ip = getClientIp(req.headers);
+
+    // Rate-limit: 3 OTP requests per 5 min per (IP + email).
+    // Identifiers combined to prevent a single attacker from rotating emails
+    // to bypass IP-only limits, and vice versa.
+    const identifier = `${ip}:${email.toLowerCase()}`;
+    const rl = await rateLimit(identifier, LIMITS.OTP_SEND);
+    if (!rl.ok) {
+      const retryAfterSec = Math.ceil((rl.resetAt - Date.now()) / 1000);
+      return NextResponse.json(
+        {
+          error:
+            "Too many verification codes requested. Please wait a few minutes before trying again.",
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(retryAfterSec),
+            ...rateLimitHeaders(rl),
+          },
+        },
+      );
+    }
+
     // Verify Turnstile
-    const ip =
-      req.headers.get("CF-Connecting-IP") ??
-      req.headers.get("X-Forwarded-For") ??
-      "127.0.0.1";
     const turnstileOk = await verifyTurnstile(turnstileToken, ip);
     if (!turnstileOk) {
       return NextResponse.json(
@@ -71,8 +94,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Generate 6-digit OTP
-    const code = String(Math.floor(100000 + Math.random() * 900000));
+    // Generate 6-digit OTP using cryptographic random (NOT Math.random which is
+    // predictable — see https://v8.dev/blog/math.random).
+    const code = String(crypto.randomInt(100000, 1000000));
     setOtp(email, { code, expiresAt: now + 5 * 60 * 1000 });
 
     // Send via Resend

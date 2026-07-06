@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { useRouter } from "next/navigation";
+import { useTranslations, useFormatter } from "next-intl";
 import { Database, FileBox, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -28,14 +29,14 @@ interface SourcesListProps {
   sources: SourceRow[];
 }
 
-/** Human-readable label for each data source type. */
-const TYPE_LABELS: Record<string, string> = {
-  pg: "PostgreSQL",
-  mysql: "MySQL",
-  bigquery: "BigQuery",
-  duckdb: "DuckDB file",
-  sqlite: "SQLite file",
-  file: "File",
+/** Maps a data source type key to its translation message key. */
+const TYPE_LABEL_KEYS: Record<string, string> = {
+  pg: "typePostgres",
+  mysql: "typeMysql",
+  bigquery: "typeBigquery",
+  duckdb: "typeDuckdbFile",
+  sqlite: "typeSqliteFile",
+  file: "typeFile",
 };
 
 /** Returns true for file-backed types that show a file icon. */
@@ -60,8 +61,16 @@ function metaSubtitle(source: SourceRow): string {
  */
 export function SourcesList({ sources }: SourcesListProps) {
   const router = useRouter();
+  const t = useTranslations("Sources");
+  const tc = useTranslations("Common");
+  const format = useFormatter();
   const [, startTransition] = useTransition();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  function typeLabel(type: string): string {
+    const key = TYPE_LABEL_KEYS[type];
+    return key ? t(key) : type;
+  }
 
   async function handleDelete(id: string, name: string) {
     // Disable the button early while we fetch the bound chart count.
@@ -80,8 +89,8 @@ export function SourcesList({ sources }: SourcesListProps) {
 
     const message =
       chartCount > 0
-        ? `Delete "${name}"? This will also permanently delete ${chartCount} chart(s) bound to this data source. This cannot be undone.`
-        : `Delete "${name}"? This cannot be undone.`;
+        ? t("confirmDeleteWithCharts", { name, count: chartCount })
+        : t("confirmDelete", { name });
 
     if (!confirm(message)) {
       setDeletingId(null);
@@ -92,12 +101,12 @@ export function SourcesList({ sources }: SourcesListProps) {
         const res = await fetch(`/api/sources/${id}`, { method: "DELETE" });
         if (!res.ok) {
           const err = await res.text();
-          throw new Error(err || `Failed: ${res.status}`);
+          throw new Error(err || tc("failedStatus", { status: res.status }));
         }
-        toast.success(`"${name}" deleted`);
+        toast.success(t("toastDeletedNamed", { name }));
         router.refresh();
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Delete failed";
+        const msg = err instanceof Error ? err.message : t("toastDeleteFailed");
         toast.error(msg);
       } finally {
         setDeletingId(null);
@@ -110,10 +119,10 @@ export function SourcesList({ sources }: SourcesListProps) {
       <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16 text-center">
         <Database className="mb-3 h-8 w-8 text-muted-foreground" />
         <p className="text-sm text-muted-foreground">
-          No data sources yet.
+          {t("emptyStateTitle")}
         </p>
         <Button asChild variant="outline" className="mt-4">
-          <Link href="/sources/new">Connect your first data source</Link>
+          <Link href="/sources/new">{t("emptyStateCta")}</Link>
         </Button>
       </div>
     );
@@ -124,10 +133,10 @@ export function SourcesList({ sources }: SourcesListProps) {
       <Table>
         <TableHeader className="bg-muted/40">
           <TableRow className="hover:bg-transparent">
-            <TableHead>Name</TableHead>
-            <TableHead className="w-32">Type</TableHead>
-            <TableHead className="w-44">Created</TableHead>
-            <TableHead className="w-32 text-right">Actions</TableHead>
+            <TableHead>{t("colName")}</TableHead>
+            <TableHead className="w-32">{t("colType")}</TableHead>
+            <TableHead className="w-44">{t("colCreated")}</TableHead>
+            <TableHead className="w-32 text-right">{t("colActions")}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -152,10 +161,10 @@ export function SourcesList({ sources }: SourcesListProps) {
                   </div>
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
-                  {TYPE_LABELS[s.type] ?? s.type}
+                  {typeLabel(s.type)}
                 </TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground" suppressHydrationWarning>
-                  {new Date(s.created_at).toLocaleDateString()}
+                  {format.dateTime(new Date(s.created_at), { dateStyle: "medium" })}
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1">
@@ -164,7 +173,7 @@ export function SourcesList({ sources }: SourcesListProps) {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
-                      title="Edit"
+                      title={t("editTitle")}
                     >
                       <Link href={`/sources/${s.id}/edit`}>
                         <Pencil className="h-3.5 w-3.5" />
@@ -174,7 +183,7 @@ export function SourcesList({ sources }: SourcesListProps) {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                      title="Delete"
+                      title={t("deleteTitle")}
                       disabled={deletingId === s.id}
                       onClick={() => handleDelete(s.id, s.name)}
                     >

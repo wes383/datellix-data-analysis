@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
 import { ArrowLeft, Database, Loader2 } from "lucide-react";
-import Link from "next/link";
+import { Link, useRouter } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,16 @@ import {
 } from "@/components/ui/card";
 
 type DbType = "pg" | "mysql" | "bigquery" | "duckdb" | "sqlite" | "file";
+
+/** Maps a data source type key to its translation message key (full labels). */
+const TYPE_LABEL_KEYS: Record<DbType, string> = {
+  pg: "typePostgres",
+  mysql: "typeMysql",
+  bigquery: "typeBigquery",
+  duckdb: "typeDuckdbFile",
+  sqlite: "typeSqliteFile",
+  file: "typeFile",
+};
 
 /** Metadata returned by GET /api/sources/[id] (no secrets). */
 export interface SourceInitialValues {
@@ -64,6 +74,8 @@ export function SourceForm({
   cancelHref,
 }: SourceFormProps) {
   const router = useRouter();
+  const t = useTranslations("Sources");
+  const tc = useTranslations("Common");
   const isEdit = mode === "edit";
 
   const [submitting, setSubmitting] = useState(false);
@@ -98,7 +110,7 @@ export function SourceForm({
   }
 
   function validate(): string | null {
-    if (!form.name.trim()) return "Please enter a display name";
+    if (!form.name.trim()) return t("errDisplayNameRequired");
     if (isEdit && isFileType(type)) {
       // File types in edit mode: only name is editable.
       return null;
@@ -108,7 +120,7 @@ export function SourceForm({
         // In edit mode, password is optional; other fields required only if
         // they're empty AND we're not keeping the existing config.
         if (!form.host.trim() || !form.database.trim() || !form.user.trim()) {
-          return "Please fill in host, database, and user";
+          return t("errHostDbUserRequired");
         }
       } else if (
         !form.host.trim() ||
@@ -116,16 +128,16 @@ export function SourceForm({
         !form.user.trim() ||
         !form.password.trim()
       ) {
-        return "Please fill in all required database fields";
+        return t("errDbFieldsRequired");
       }
     } else if (type === "bigquery") {
       if (isEdit) {
-        if (!form.projectId.trim()) return "Please fill in projectId";
+        if (!form.projectId.trim()) return t("errProjectIdRequired");
       } else if (!form.projectId.trim() || !form.credentialsJson.trim()) {
-        return "Please fill in projectId and credentialsJson";
+        return t("errBigqueryFieldsRequired");
       }
     } else if (isFileType(type) && !isEdit) {
-      if (!file) return "Please select a database file";
+      if (!file) return t("errDatabaseFileRequired");
     }
     return null;
   }
@@ -162,7 +174,7 @@ export function SourceForm({
             if (!replaceRes.ok) {
               const errBody = await replaceRes.text();
               throw new Error(
-                errBody || `File replace failed: ${replaceRes.status}`,
+                errBody || t("toastFileReplaceFailed", { status: replaceRes.status }),
               );
             }
           } finally {
@@ -237,7 +249,7 @@ export function SourceForm({
 
       if (!res.ok) {
         const errBody = await res.text();
-        throw new Error(errBody || `Request failed: ${res.status}`);
+        throw new Error(errBody || tc("failedStatus", { status: res.status }));
       }
 
       if (!isEdit) {
@@ -247,21 +259,21 @@ export function SourceForm({
           indexError?: string;
         };
         if (data.indexed) {
-          toast.success(`Data source "${form.name.trim()}" connected`, {
-            description: "Schema indexed successfully",
+          toast.success(t("toastConnectedNamed", { name: form.name.trim() }), {
+            description: t("toastSchemaIndexed"),
           });
         } else {
-          toast.success(`Data source "${form.name.trim()}" connected`, {
+          toast.success(t("toastConnectedNamed", { name: form.name.trim() }), {
             description: data.indexError
-              ? `Schema indexing failed: ${data.indexError}`
-              : "Schema indexing skipped",
+              ? t("toastSchemaIndexingFailedNamed", { error: data.indexError })
+              : t("toastSchemaIndexingSkipped"),
           });
         }
       } else {
-        toast.success(`Data source "${form.name.trim()}" updated`, {
+        toast.success(t("toastUpdatedNamed", { name: form.name.trim() }), {
           description:
             isFileType(type) && replaceFile
-              ? "File replaced — charts will use the new data on next re-query."
+              ? t("toastFileReplaced")
               : undefined,
         });
       }
@@ -269,7 +281,7 @@ export function SourceForm({
       router.refresh();
       router.push(doneHref);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Request failed";
+      const msg = err instanceof Error ? err.message : tc("requestFailed");
       toast.error(msg);
     } finally {
       setSubmitting(false);
@@ -291,14 +303,14 @@ export function SourceForm({
             size="icon"
             className="h-9 w-9 shrink-0"
           >
-            <Link href={cancelHref} aria-label="Back">
+            <Link href={cancelHref} aria-label={t("backAriaLabel")}>
               <ArrowLeft className="h-4 w-4" />
             </Link>
           </Button>
           <div className="flex items-center gap-2">
             <Database className="h-5 w-5 text-primary" />
             <h1 className="font-display text-2xl font-semibold tracking-tight">
-              {isEdit ? "Edit data source" : "Connect database"}
+              {isEdit ? t("editDataSourceTitle") : t("connectDatabaseTitle")}
             </h1>
           </div>
         </div>
@@ -306,19 +318,19 @@ export function SourceForm({
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">
-              {isEdit ? "Connection details" : "Database connection"}
+              {isEdit ? t("cardConnectionDetails") : t("cardDatabaseConnection")}
             </CardTitle>
             <CardDescription>
               {isEdit
-                ? "Update the display name or connection details. Leave the password blank to keep the current one. Credentials are encrypted with pgcrypto."
-                : "Choose a database type and enter the connection details. Credentials are encrypted with pgcrypto before storage and only decrypted server-side at query time."}
+                ? t("cardDescriptionEdit")
+                : t("cardDescriptionNew")}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-5">
               {/* Database type selector — disabled in edit mode (type immutable) */}
               <div className="space-y-2">
-                <Label htmlFor="type">Database type</Label>
+                <Label htmlFor="type">{t("labelDatabaseType")}</Label>
                 <Select
                   id="type"
                   value={type}
@@ -333,21 +345,21 @@ export function SourceForm({
                     }
                   }}
                   options={[
-                    { value: "pg", label: "PostgreSQL" },
-                    { value: "mysql", label: "MySQL" },
-                    { value: "bigquery", label: "BigQuery" },
-                    { value: "duckdb", label: "DuckDB file" },
-                    { value: "sqlite", label: "SQLite file" },
+                    { value: "pg", label: t("typePostgres") },
+                    { value: "mysql", label: t("typeMysql") },
+                    { value: "bigquery", label: t("typeBigquery") },
+                    { value: "duckdb", label: t("typeDuckdbFile") },
+                    { value: "sqlite", label: t("typeSqliteFile") },
                     // file type only shown in edit mode for existing file sources;
                     // file data sources are created via chat upload, not this form.
                     ...(isEdit && type === "file"
-                      ? [{ value: "file", label: "File (CSV/Excel/Parquet)" }]
+                      ? [{ value: "file", label: t("optionFile") }]
                       : []),
                   ]}
                 />
                 {isEdit && (
                   <p className="font-mono text-[10px] text-muted-foreground">
-                    The database type cannot be changed after creation.
+                    {t("hintDbTypeLocked")}
                   </p>
                 )}
               </div>
@@ -355,13 +367,13 @@ export function SourceForm({
               {/* Display name (always shown) */}
               <div className="space-y-2">
                 <Label htmlFor="name">
-                  Display name <span className="text-destructive">*</span>
+                  {t("labelDisplayName")} <span className="text-destructive">*</span>
                 </Label>
                 <Input
                   id="name"
                   value={form.name}
                   onChange={(e) => update("name", e.target.value)}
-                  placeholder="Production analytics"
+                  placeholder={t("placeholderDisplayName")}
                   required
                   autoFocus
                 />
@@ -373,7 +385,7 @@ export function SourceForm({
                   <div className="grid grid-cols-3 gap-4">
                     <div className="col-span-2 space-y-2">
                       <Label htmlFor="host">
-                        Host {!isEdit && <span className="text-destructive">*</span>}
+                        {t("labelHost")} {!isEdit && <span className="text-destructive">*</span>}
                       </Label>
                       <Input
                         id="host"
@@ -381,20 +393,20 @@ export function SourceForm({
                         onChange={(e) => update("host", e.target.value)}
                         placeholder={
                           type === "pg"
-                            ? "db.xxx.supabase.co"
-                            : "mysql.example.com"
+                            ? t("placeholderHostSupabase")
+                            : t("placeholderHostMysql")
                         }
                         required={!isEdit}
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="port">Port</Label>
+                      <Label htmlFor="port">{t("labelPort")}</Label>
                       <Input
                         id="port"
                         type="number"
                         value={form.port}
                         onChange={(e) => update("port", e.target.value)}
-                        placeholder={type === "pg" ? "5432" : "3306"}
+                        placeholder={type === "pg" ? t("placeholderPortPg") : t("placeholderPortMysql")}
                       />
                     </div>
                   </div>
@@ -402,25 +414,25 @@ export function SourceForm({
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="database">
-                        Database {!isEdit && <span className="text-destructive">*</span>}
+                        {t("labelDatabase")} {!isEdit && <span className="text-destructive">*</span>}
                       </Label>
                       <Input
                         id="database"
                         value={form.database}
                         onChange={(e) => update("database", e.target.value)}
-                        placeholder={type === "pg" ? "postgres" : "mysql"}
+                        placeholder={type === "pg" ? t("placeholderDbPg") : t("placeholderDbMysql")}
                         required={!isEdit}
                       />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="user">
-                        User {!isEdit && <span className="text-destructive">*</span>}
+                        {t("labelUser")} {!isEdit && <span className="text-destructive">*</span>}
                       </Label>
                       <Input
                         id="user"
                         value={form.user}
                         onChange={(e) => update("user", e.target.value)}
-                        placeholder={type === "pg" ? "postgres" : "root"}
+                        placeholder={t("placeholderUserRoot")}
                         required={!isEdit}
                       />
                     </div>
@@ -428,11 +440,11 @@ export function SourceForm({
 
                   <div className="space-y-2">
                     <Label htmlFor="password">
-                      Password
+                      {t("labelPassword")}
                       {!isEdit && <span className="text-destructive"> *</span>}
                       {isEdit && (
                         <span className="ml-2 font-normal text-muted-foreground">
-                          (leave blank to keep current)
+                          {t("hintLeaveBlankKeepCurrent")}
                         </span>
                       )}
                     </Label>
@@ -447,16 +459,16 @@ export function SourceForm({
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="ssl">SSL mode</Label>
+                    <Label htmlFor="ssl">{t("labelSslMode")}</Label>
                     <Select
                       id="ssl"
                       value={form.ssl}
                       onChange={(v) => update("ssl", v)}
                       options={[
-                        { value: "require", label: "require (recommended)" },
-                        { value: "disable", label: "disable" },
-                        { value: "verify-ca", label: "verify-ca" },
-                        { value: "verify-full", label: "verify-full" },
+                        { value: "require", label: t("sslModeRequire") },
+                        { value: "disable", label: t("sslModeDisable") },
+                        { value: "verify-ca", label: t("sslModeVerifyCa") },
+                        { value: "verify-full", label: t("sslModeVerifyFull") },
                       ]}
                     />
                   </div>
@@ -468,34 +480,34 @@ export function SourceForm({
                 <>
                   <div className="space-y-2">
                     <Label htmlFor="projectId">
-                      Project ID {!isEdit && <span className="text-destructive">*</span>}
+                      {t("labelProjectId")} {!isEdit && <span className="text-destructive">*</span>}
                     </Label>
                     <Input
                       id="projectId"
                       value={form.projectId}
                       onChange={(e) => update("projectId", e.target.value)}
-                      placeholder="my-gcp-project"
+                      placeholder={t("placeholderProjectId")}
                       required={!isEdit}
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="location">Location</Label>
+                    <Label htmlFor="location">{t("labelLocation")}</Label>
                     <Input
                       id="location"
                       value={form.location}
                       onChange={(e) => update("location", e.target.value)}
-                      placeholder="US"
+                      placeholder={t("placeholderLocation")}
                     />
                   </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="credentialsJson">
-                      Service account JSON
+                      {t("labelServiceAccountJson")}
                       {!isEdit && <span className="text-destructive"> *</span>}
                       {isEdit && (
                         <span className="ml-2 font-normal text-muted-foreground">
-                          (leave blank to keep current)
+                          {t("hintLeaveBlankKeepCurrent")}
                         </span>
                       )}
                     </Label>
@@ -505,28 +517,28 @@ export function SourceForm({
                       onChange={(e) =>
                         update("credentialsJson", e.target.value)
                       }
-                      placeholder='{ "type": "service_account", "project_id": "…", … }'
+                      placeholder={t("placeholderServiceAccountJson")}
                       rows={8}
                       required={!isEdit}
                       className="font-mono text-xs"
                     />
                     <p className="font-mono text-[10px] text-muted-foreground">
                       {isEdit
-                        ? "Paste a new key only if you want to rotate credentials."
-                        : "Paste the full contents of your service account JSON key file."}
+                        ? t("hintRotateCredentials")
+                        : t("hintServiceAccountJson")}
                     </p>
                   </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="dataset">
-                      Default dataset{" "}
+                      {t("labelDefaultDataset")}{" "}
                       <span className="text-muted-foreground">(optional)</span>
                     </Label>
                     <Input
                       id="dataset"
                       value={form.dataset}
                       onChange={(e) => update("dataset", e.target.value)}
-                      placeholder="analytics"
+                      placeholder={t("placeholderDataset")}
                     />
                   </div>
                 </>
@@ -536,7 +548,7 @@ export function SourceForm({
               {isFile && !isEdit && (
                 <div className="space-y-2">
                   <Label htmlFor="file">
-                    {type === "duckdb" ? "DuckDB file" : "SQLite file"}{" "}
+                    {type === "duckdb" ? t("labelDuckdbFile") : t("labelSqliteFile")}{" "}
                     <span className="text-destructive">*</span>
                   </Label>
                   <Input
@@ -550,19 +562,18 @@ export function SourceForm({
                   />
                   {file && (
                     <p className="font-mono text-[10px] text-muted-foreground">
-                      Selected: {file.name} ({(file.size / 1024).toFixed(1)} KB)
+                      {t("selectedLabel")} {file.name} ({(file.size / 1024).toFixed(1)} KB)
                     </p>
                   )}
                   <p className="font-mono text-[10px] text-muted-foreground">
-                    The file is uploaded to Vercel Blob and queried inside the
-                    sandbox at runtime.
+                    {t("hintFileUploadedToBlob")}
                   </p>
                 </div>
               )}
 
               {isFile && isEdit && (
                 <div className="space-y-2">
-                  <Label htmlFor="replaceFile">Replace file (optional)</Label>
+                  <Label htmlFor="replaceFile">{t("labelReplaceFile")}</Label>
                   <Input
                     id="replaceFile"
                     type="file"
@@ -580,13 +591,12 @@ export function SourceForm({
                   />
                   {replaceFile && (
                     <p className="font-mono text-[10px] text-muted-foreground">
-                      Selected: {replaceFile.name} (
+                      {t("selectedLabel")} {replaceFile.name} (
                       {(replaceFile.size / 1024).toFixed(1)} KB)
                     </p>
                   )}
                   <p className="font-mono text-[10px] text-muted-foreground">
-                    Upload a new file to replace the existing one. Charts bound
-                    to this data source will automatically use the new data.
+                    {t("hintReplaceFile")}
                   </p>
                   {(() => {
                     const filename =
@@ -597,7 +607,7 @@ export function SourceForm({
                     const size = meta.size as number | undefined;
                     return (
                       <p className="font-mono text-[10px] text-muted-foreground">
-                        Current file:
+                        {t("currentFileLabel")}
                         {filename ? ` ${filename}` : " —"}
                         {typeof size === "number"
                           ? ` (${(size / 1024).toFixed(1)} KB)`
@@ -610,31 +620,31 @@ export function SourceForm({
 
               {sessionId && !isEdit && (
                 <p className="rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-muted-foreground">
-                  This data source will be bound to the current session.
+                  {t("hintBoundToSession")}
                 </p>
               )}
 
               {/* Actions */}
               <div className="flex items-center justify-end gap-2 pt-2">
                 <Button asChild variant="outline" type="button">
-                  <Link href={cancelHref}>Cancel</Link>
+                  <Link href={cancelHref}>{tc("cancel")}</Link>
                 </Button>
                 <Button type="submit" disabled={submitting}>
                   {submitting ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
                       {replacingFile
-                        ? "Replacing file…"
+                        ? t("buttonReplacingFile")
                         : isEdit
-                          ? "Saving…"
-                          : "Connecting…"}
+                          ? tc("saving")
+                          : tc("connecting")}
                     </>
                   ) : isEdit ? (
-                    "Save changes"
+                    t("buttonSaveChanges")
                   ) : isFile ? (
-                    "Upload & connect"
+                    t("buttonUploadAndConnect")
                   ) : (
-                    "Connect & index"
+                    t("buttonConnectAndIndex")
                   )}
                 </Button>
               </div>

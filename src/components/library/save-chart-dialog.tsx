@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,7 +42,9 @@ export function SaveChartDialog({
   sessionId,
   dataSourceIds,
 }: SaveChartDialogProps) {
-  const [title, setTitle] = useState(defaultTitle || "Untitled chart");
+  const t = useTranslations("Library");
+  const tc = useTranslations("Common");
+  const [title, setTitle] = useState(defaultTitle || tc("untitledChart"));
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -49,7 +52,7 @@ export function SaveChartDialog({
     e.preventDefault();
     if (!title.trim() || saving) return;
     if (dataSourceIds.length === 0) {
-      toast.error("No data source bound to this session. Cannot save chart.");
+      toast.error(t("toastNoDataSourceBound"));
       return;
     }
     setSaving(true);
@@ -69,12 +72,12 @@ export function SaveChartDialog({
       });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || `Failed: ${res.status}`);
+        throw new Error(err.error || tc("failedStatus", { status: res.status }));
       }
-      toast.success("Chart saved to library");
+      toast.success(t("toastChartSaved"));
       onClose();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Save failed";
+      const msg = err instanceof Error ? err.message : t("toastSaveFailed");
       toast.error(msg);
     } finally {
       setSaving(false);
@@ -92,7 +95,7 @@ export function SaveChartDialog({
       <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-lg">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="font-display text-base font-semibold tracking-tight">
-            Save to chart library
+            {t("dialogTitle")}
           </h2>
           <button
             type="button"
@@ -104,46 +107,46 @@ export function SaveChartDialog({
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="chart-title">Title</Label>
+            <Label htmlFor="chart-title">{t("labelTitle")}</Label>
             <Input
               id="chart-title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Chart title"
+              placeholder={t("placeholderChartTitle")}
               required
               autoFocus
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="chart-description">Description (optional)</Label>
+            <Label htmlFor="chart-description">{t("labelDescriptionOptional")}</Label>
             <Textarea
               id="chart-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Add a description..."
+              placeholder={t("placeholderDescription")}
               rows={3}
             />
           </div>
           <div className="rounded-md border border-border bg-muted/40 px-3 py-2">
             <p className="font-mono text-[10px] text-muted-foreground">
-              Renderer: {renderer}
-              {sql ? " · SQL will be saved for re-query" : ""}
+              {t("labelRenderer")} {renderer}
+              {sql ? ` · ${t("hintSqlSavedForRequery")}` : ""}
               {" · "}
-              {dataSourceIds.length} data source{dataSourceIds.length === 1 ? "" : "s"} bound
+              {t("hintDataSourcesBound", { count: dataSourceIds.length })}
             </p>
           </div>
           <div className="flex items-center justify-end gap-2 pt-2">
             <Button type="button" variant="outline" onClick={onClose}>
-              Cancel
+              {tc("cancel")}
             </Button>
             <Button type="submit" disabled={saving || !title.trim()}>
               {saving ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Saving…
+                  {tc("saving")}
                 </>
               ) : (
-                "Save to library"
+                t("buttonSaveToLibrary")
               )}
             </Button>
           </div>

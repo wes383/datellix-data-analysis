@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import { Trash2, AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { deleteAccount } from "@/app/actions/sessions";
@@ -20,6 +21,8 @@ import { toast } from "sonner";
  * is shown and the panel stays open so the user can retry.
  */
 export function DeleteAccountButton() {
+  const t = useTranslations("Settings");
+  const tc = useTranslations("Common");
   const [confirming, setConfirming] = useState(false);
   const [pending, startTransition] = useTransition();
   const router = useRouter();
@@ -37,7 +40,7 @@ export function DeleteAccountButton() {
         toast.error(
           err instanceof Error
             ? err.message
-            : "Failed to delete account. Please try again.",
+            : t("toastDeleteFailed"),
         );
       }
     });
@@ -53,7 +56,7 @@ export function DeleteAccountButton() {
         className="text-destructive hover:bg-destructive/10 hover:text-destructive"
       >
         <Trash2 className="h-3.5 w-3.5" />
-        Delete account
+        {t("deleteAccount")}
       </Button>
     );
   }
@@ -63,9 +66,7 @@ export function DeleteAccountButton() {
       <div className="flex items-start gap-2 text-xs text-destructive">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
         <p>
-          This permanently deletes your account and all associated data —
-          sessions, charts, data sources, and settings. This action cannot
-          be undone.
+          {t("confirmDeleteBody")}
         </p>
       </div>
       <div className="flex items-center gap-2">
@@ -81,7 +82,7 @@ export function DeleteAccountButton() {
           ) : (
             <Trash2 className="h-3.5 w-3.5" />
           )}
-          Delete permanently
+          {t("buttonDeletePermanently")}
         </Button>
         <Button
           type="button"
@@ -90,7 +91,7 @@ export function DeleteAccountButton() {
           onClick={() => setConfirming(false)}
           disabled={pending}
         >
-          Cancel
+          {tc("cancel")}
         </Button>
       </div>
     </div>

@@ -43,16 +43,151 @@ function getClient(): Daytona {
   return daytonaClient;
 }
 
+/** Label applied to every sandbox this app creates, so we can identify and
+ *  clean up leaked sandboxes without touching sandboxes from other apps in
+ *  the same Daytona organization. */
+const SANDBOX_LABEL_APP = "datellix";
+
+/** Auto-delete interval (minutes). A sandbox is deleted this long after it
+ *  stops (either explicitly or via autoStopInterval). This is a safety net —
+ *  our code already deletes sandboxes in `finally` blocks, but if the
+ *  process is killed (serverless timeout, host restart) before `finally`
+ *  runs, the sandbox would leak forever. 30 min gives long-running chat
+ *  turns plenty of headroom while ensuring no sandbox survives more than
+ *  30 min after it goes idle. */
+const SANDBOX_AUTO_DELETE_MINUTES = 30;
+
+/** Detect a Daytona disk-quota error from the SDK's error shape. */
+function isDiskLimitError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes("disk limit exceeded") ||
+    msg.includes("total disk limit") ||
+    (msg.includes("storage") && msg.includes("limit"))
+  );
+}
+
+/** Detect a transient network / TLS / connection error that is safe to retry.
+ *
+ *  These are typically caused by:
+ *    - CloudFront / CDN hiccups ("Client network socket disconnected before
+ *      secure TLS connection was established")
+ *    - DNS resolution failures
+ *    - Connection resets (ECONNRESET)
+ *    - 5xx responses from the Daytona API that are not quota-related
+ *
+ *  Such errors are not the user's fault and usually succeed on retry, so we
+ *  retry up to 2 times with exponential backoff before giving up.
+ */
+function isTransientNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  // Network / TLS errors
+  if (
+    msg.includes("socket disconnected") ||
+    msg.includes("tls connection") ||
+    msg.includes("econnreset") ||
+    msg.includes("econnrefused") ||
+    msg.includes("etimedout") ||
+    msg.includes("enotfound") ||
+    msg.includes("fetch failed") ||
+    msg.includes("network error") ||
+    msg.includes("terminate")
+  ) {
+    return true;
+  }
+  // Daytona SDK error code: 5xx status codes are typically transient
+  // (DaytonaValidationError has statusCode=400, which we exclude).
+  const anyErr = err as { statusCode?: number; status?: number };
+  const status = anyErr.statusCode ?? anyErr.status;
+  if (typeof status === "number" && status >= 500 && status < 600) {
+    return true;
+  }
+  return false;
+}
+
+/** Sleep helper — used for retry backoff. */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Options for the low-level `createSandboxOnce` helper. Kept separate so
+ *  the public `createSandbox()` wrapper can call it without a disk-cleanup
+ *  loop on every retry — disk cleanup only runs once per quota error. */
+function buildCreateOptions() {
+  return {
+    image: process.env.DAYTONA_IMAGE ?? "datellix-data-analysis",
+    language: "python" as const,
+    labels: { app: SANDBOX_LABEL_APP },
+    autoDeleteInterval: SANDBOX_AUTO_DELETE_MINUTES,
+  };
+}
+
+/** Maximum number of retries for transient network errors (TLS disconnects,
+ *  connection resets, 5xx responses). Total attempts = 1 + MAX_TRANSIENT_RETRIES.
+ *  Base delay 500ms doubles each retry → 500ms, 1000ms, 2000ms. */
+const MAX_TRANSIENT_RETRIES = 3;
+const TRANSIENT_RETRY_BASE_MS = 500;
+
 /**
  * Create a fresh sandbox. Used by the request-level reuse flow (route.ts
  * wraps this in a lazy provider) and by `runPython`'s ephemeral fallback.
+ *
+ * Every sandbox is tagged with `labels.app = "datellix"` and configured with
+ * `autoDeleteInterval = 30` so Daytona itself deletes the sandbox 30 minutes
+ * after it stops — even if our `finally` block never runs (e.g. serverless
+ * timeout, host crash). This prevents the disk-quota leakage that occurs when
+ * abandoned sandboxes accumulate.
+ *
+ * Resilience:
+ *  1. Disk-quota error → clean up all leaked sandboxes once, then retry.
+ *  2. Transient network error (TLS disconnect, ECONNRESET, 5xx) → retry up
+ *     to 3 times with exponential backoff (500ms, 1s, 2s).
+ *  3. Other errors → throw immediately.
  */
 export async function createSandbox(): Promise<Sandbox> {
   const client = getClient();
-  return client.create({
-    image: process.env.DAYTONA_IMAGE ?? "datellix-data-analysis",
-    language: "python",
-  });
+  let diskCleanupAttempted = false;
+
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await client.create(buildCreateOptions());
+    } catch (err) {
+      // 1. Disk-quota error: clean up once, then continue the retry loop
+      //    (the next attempt goes through the transient-retry path below).
+      if (isDiskLimitError(err) && !diskCleanupAttempted) {
+        diskCleanupAttempted = true;
+        console.warn(
+          "[daytona] createSandbox hit disk quota — cleaning up stale sandboxes and retrying...",
+        );
+        // Use includeAll=true so pre-label sandboxes (created before the
+        // app=datellix label was added) are also cleaned up. Safe in a
+        // single-app Daytona org; in a multi-app org set ADMIN_SECRET and
+        // call the admin route with all=false instead.
+        const cleanup = await cleanupStaleSandboxes(true);
+        console.warn(
+          `[daytona] cleanup deleted ${cleanup.deleted}/${cleanup.total} sandboxes, ` +
+            `${cleanup.failed} failed — retrying createSandbox...`,
+        );
+        continue;
+      }
+
+      // 2. Transient network error: retry with exponential backoff up to
+      //    MAX_TRANSIENT_RETRIES times.
+      if (isTransientNetworkError(err) && attempt < MAX_TRANSIENT_RETRIES) {
+        const delay = TRANSIENT_RETRY_BASE_MS * Math.pow(2, attempt);
+        console.warn(
+          `[daytona] createSandbox transient error (attempt ${attempt + 1}/${MAX_TRANSIENT_RETRIES + 1}), ` +
+            `retrying in ${delay}ms:`,
+          err instanceof Error ? err.message : err,
+        );
+        await sleep(delay);
+        continue;
+      }
+
+      // 3. Non-retryable, or retries exhausted — rethrow.
+      throw err;
+    }
+  }
 }
 
 /**
@@ -214,3 +349,73 @@ export async function runPython(
 
 /** Standard path for data files inside the sandbox */
 export const SANDBOX_DATA_DIR = "/tmp/data";
+
+// ============================================================
+// Sandbox cleanup (disk-quota safety net)
+// ============================================================
+
+/** Result of a cleanup pass. */
+export interface CleanupResult {
+  /** Number of sandboxes successfully deleted. */
+  deleted: number;
+  /** Number of sandboxes that failed to delete. */
+  failed: number;
+  /** Total number of sandboxes found before cleanup. */
+  total: number;
+}
+
+/**
+ * List and delete all sandboxes created by this app (identified by the
+ * `app=datellix` label), or ALL sandboxes in the organization when
+ * `includeAll` is true.
+ *
+ * This is the recovery path for leaked sandboxes — sandboxes whose `finally`
+ * cleanup never ran (e.g. serverless function was killed mid-execution).
+ * Call this when `createSandbox()` fails with a disk-quota error, or expose
+ * it via an admin route for manual cleanup.
+ *
+ * Deletion is best-effort: failures are counted but don't abort the pass.
+ *
+ * @param includeAll  When true, delete ALL sandboxes in the org (including
+ *                   those from other apps). Use with caution. Defaults to
+ *                   false (only `app=datellix` sandboxes).
+ * @param except     Optional sandbox ID to skip (e.g. a currently-in-use
+ *                   sandbox that must not be deleted).
+ */
+export async function cleanupStaleSandboxes(
+  includeAll = false,
+  except?: string,
+): Promise<CleanupResult> {
+  const client = getClient();
+  let total = 0;
+  let deleted = 0;
+  let failed = 0;
+
+  for await (const sandbox of client.list()) {
+    total++;
+    if (except && sandbox.id === except) continue;
+    if (!includeAll && sandbox.labels?.app !== SANDBOX_LABEL_APP) {
+      continue;
+    }
+    try {
+      await sandbox.delete();
+      deleted++;
+    } catch (err: any) {
+      // 404 = already deleted, skip silently
+      if (
+        err?.message?.includes("not found") ||
+        err?.status === 404 ||
+        err?.code === 404
+      ) {
+        continue;
+      }
+      failed++;
+      console.error(
+        `[daytona] cleanup: failed to delete sandbox ${sandbox.id}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  return { deleted, failed, total };
+}

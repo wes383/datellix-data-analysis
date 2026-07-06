@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef } from "react";
+import { useTranslations } from "next-intl";
 import {
   Bar,
   BarChart,
@@ -119,12 +120,13 @@ const TOOLTIP_STYLE = {
  */
 export const RechartsRenderer = forwardRef<HTMLDivElement, RechartsRendererProps>(
   function RechartsRenderer({ spec, height }, ref) {
+    const t = useTranslations("Chat");
     const { chartType, data, xKey, yKeys, title, groupKey, uiConfig } = spec;
 
     if (!data || data.length === 0 || !xKey || yKeys.length === 0) {
       return (
         <div className="flex h-48 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-          No data to visualize
+          {t("noDataToVisualize")}
         </div>
       );
     }

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import { Database, FileBox, Loader2, Plus, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -44,15 +45,6 @@ interface AddDataSourceDialogProps {
   trigger: React.ReactNode;
 }
 
-const TYPE_LABELS: Record<string, string> = {
-  pg: "PostgreSQL",
-  mysql: "MySQL",
-  bigquery: "BigQuery",
-  duckdb: "DuckDB",
-  sqlite: "SQLite",
-  file: "File",
-};
-
 function metaSubtitle(meta: Record<string, unknown>, type: string): string {
   if (type === "pg" || type === "mysql") {
     const host = meta.host as string | undefined;
@@ -78,6 +70,7 @@ export function AddDataSourceDialog({
   trigger,
 }: AddDataSourceDialogProps) {
   const router = useRouter();
+  const t = useTranslations("Chat");
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("existing");
 
@@ -104,7 +97,7 @@ export function AddDataSourceDialog({
       const s = await createSession();
       return s.id;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to create session";
+      const msg = err instanceof Error ? err.message : t("toastFailedToCreateSession");
       toast.error(msg);
       return null;
     }
@@ -126,12 +119,12 @@ export function AddDataSourceDialog({
           >
             {/* Header */}
             <div className="flex items-center justify-between border-b border-border px-5 py-3">
-              <h2 className="text-base font-semibold">Add data source</h2>
+              <h2 className="text-base font-semibold">{t("addDataSourceTitle")}</h2>
               <button
                 type="button"
                 onClick={handleClose}
                 className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                aria-label="Close"
+                aria-label={t("closeAriaLabel")}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -145,21 +138,21 @@ export function AddDataSourceDialog({
                 disabled={existingSources.length === 0}
               >
                 <FileBox className="h-3.5 w-3.5" />
-                Use existing
+                {t("tabUseExisting")}
               </TabButton>
               <TabButton
                 active={tab === "upload"}
                 onClick={() => setTab("upload")}
               >
                 <Upload className="h-3.5 w-3.5" />
-                Upload file
+                {t("tabUploadFile")}
               </TabButton>
               <TabButton
                 active={tab === "connect"}
                 onClick={() => setTab("connect")}
               >
                 <Plus className="h-3.5 w-3.5" />
-                Connect database
+                {t("tabConnectDatabase")}
               </TabButton>
             </div>
 
@@ -262,7 +255,22 @@ function ExistingTab({
   ensureSession: () => Promise<string | null>;
 }) {
   const router = useRouter();
+  const t = useTranslations("Chat");
+  const tc = useTranslations("Common");
   const [binding, setBinding] = useState<string | null>(null);
+
+  /** Map an internal data source type to a human-readable label. */
+  function getTypeLabel(type: string): string {
+    const map: Record<string, string> = {
+      pg: t("dbTypePostgres"),
+      mysql: t("dbTypeMysql"),
+      bigquery: t("dbTypeBigquery"),
+      duckdb: t("dbTypeDuckdb"),
+      sqlite: t("dbTypeSqlite"),
+      file: t("dbTypeFile"),
+    };
+    return map[type] ?? type;
+  }
 
   async function handleBind(sourceId: string) {
     if (binding) return;
@@ -284,9 +292,9 @@ function ExistingTab({
       });
       if (!res.ok) {
         const msg = await res.text();
-        throw new Error(msg || `Failed to bind source: ${res.status}`);
+        throw new Error(msg || tc("failedStatus", { status: res.status }));
       }
-      toast.success("Data source connected");
+      toast.success(t("toastDataSourceConnected"));
       onClose();
       if (sessionId === "new") {
         router.replace(`/chat/${sid}`);
@@ -294,7 +302,7 @@ function ExistingTab({
         router.refresh();
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to connect";
+      const msg = err instanceof Error ? err.message : t("toastFailedToConnect");
       toast.error(msg);
     } finally {
       setBinding(null);
@@ -316,20 +324,20 @@ function ExistingTab({
     <div className="space-y-2">
       {dataSourceMode === "database" && (
         <ModeNotice>
-          This session is connected to a database. Selecting another database will replace the current connection. Files cannot be used at the same time.
+          {t("noticeDbConnectedDisconnectFirst")}
         </ModeNotice>
       )}
       {dataSourceMode === "files" && (
         <ModeNotice>
-          This session has uploaded files. You cannot connect to a database. Remove all files first.
+          {t("noticeFilesUploadedRemoveFirst")}
         </ModeNotice>
       )}
       <p className="mb-3 text-sm text-muted-foreground">
-        Select an existing database connection or uploaded file to bind to this session.
+        {t("selectExistingDescription")}
       </p>
       {reusable.length === 0 ? (
         <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-          No reusable data sources yet. Upload a file or create a connection in the other tabs.
+          {t("noReusableDataSources")}
         </p>
       ) : (
         <div className="space-y-1.5">
@@ -343,9 +351,9 @@ function ExistingTab({
                 onClick={() => !disabled && handleBind(s.id)}
                 title={
                   dataSourceMode === "database" && s.type === "file"
-                    ? "Database is connected, cannot add files"
+                    ? t("cannotAddFilesTitle")
                     : dataSourceMode === "files" && s.type !== "file"
-                      ? "Files are uploaded, cannot connect database"
+                      ? t("cannotConnectDbTitle")
                       : undefined
                 }
                 className="flex w-full items-center gap-3 rounded-md border border-border px-3 py-2.5 text-left transition-colors hover:border-primary hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
@@ -358,7 +366,7 @@ function ExistingTab({
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{s.name}</div>
                   <div className="truncate font-mono text-[10px] text-muted-foreground">
-                    {TYPE_LABELS[s.type] ?? s.type}
+                    {getTypeLabel(s.type)}
                     {metaSubtitle(s.meta, s.type)
                       ? ` · ${metaSubtitle(s.meta, s.type)}`
                       : ""}
@@ -391,6 +399,8 @@ function UploadTab({
   ensureSession: () => Promise<string | null>;
 }) {
   const router = useRouter();
+  const t = useTranslations("Chat");
+  const tc = useTranslations("Common");
   const [uploading, setUploading] = useState(false);
   // Progress: "Uploading 2 / 5…" — completed count out of total.
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -410,7 +420,10 @@ function UploadTab({
     });
     if (invalid.length > 0) {
       toast.error(
-        `Unsupported format: ${invalid.map((f) => f.name).join(", ")}. Accepted: ${ACCEPTED_EXTS.join(", ")}. DuckDB / SQLite files use the Connect database tab.`,
+        t("toastUnsupportedFormat", {
+          names: invalid.map((f) => f.name).join(", "),
+          exts: ACCEPTED_EXTS.join(", "),
+        }),
       );
       return;
     }
@@ -447,7 +460,7 @@ function UploadTab({
           });
           if (!res.ok) {
             const msg = await res.text();
-            throw new Error(msg || `Upload failed: ${res.status}`);
+            throw new Error(msg || tc("failedStatus", { status: res.status }));
           }
           const data = (await res.json()) as {
             reused?: boolean;
@@ -462,7 +475,7 @@ function UploadTab({
         } catch (err) {
           failures.push({
             name: file.name,
-            error: err instanceof Error ? err.message : "Upload failed",
+            error: err instanceof Error ? err.message : t("toastUploadFailed"),
           });
         }
         setProgress({ done: i + 1, total: files.length });
@@ -473,10 +486,10 @@ function UploadTab({
         const newCount = successes.length - reusedCount;
         const indexedFailed = successes.filter((s) => !s.indexed);
         const parts: string[] = [];
-        if (newCount > 0) parts.push(`${newCount} new file${newCount > 1 ? "s" : ""} uploaded`);
-        if (reusedCount > 0) parts.push(`${reusedCount} reused`);
+        if (newCount > 0) parts.push(t("toastNewFilesUploaded", { count: newCount }));
+        if (reusedCount > 0) parts.push(t("toastReusedCount", { count: reusedCount }));
         toast.success(
-          parts.length > 0 ? parts.join(" · ") : "Files uploaded",
+          parts.length > 0 ? parts.join(" · ") : t("toastFilesUploaded"),
           {
             description:
               successes.length > 1
@@ -488,16 +501,22 @@ function UploadTab({
         // uploaded but the AI can't see its columns/tables.
         if (indexedFailed.length > 0) {
           toast.warning(
-            `Schema indexing failed for ${indexedFailed.length} file${indexedFailed.length > 1 ? "s" : ""}: ${indexedFailed.map((f) => f.name).join(", ")}`,
+            t("toastSchemaIndexingFailed", {
+              count: indexedFailed.length,
+              names: indexedFailed.map((f) => f.name).join(", "),
+            }),
             {
-              description: "The AI may not be able to query these files. Try re-uploading.",
+              description: t("toastSchemaIndexingFailedHint"),
             },
           );
         }
       }
       if (failures.length > 0) {
         toast.error(
-          `${failures.length} file${failures.length > 1 ? "s" : ""} failed: ${failures[0].error}`,
+          t("toastFilesFailed", {
+            count: failures.length,
+            error: failures[0].error,
+          }),
         );
       }
 
@@ -515,7 +534,7 @@ function UploadTab({
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Upload failed";
+      const msg = err instanceof Error ? err.message : t("toastUploadFailed");
       toast.error(msg);
     } finally {
       setUploading(false);
@@ -529,7 +548,7 @@ function UploadTab({
     <div className="space-y-4">
       {dataSourceMode === "database" && (
         <ModeNotice>
-          This session is connected to a database. You cannot upload files. Disconnect the database first.
+          {t("noticeDbConnectedDisconnectFirst")}
         </ModeNotice>
       )}
       <p className="text-sm text-muted-foreground">
@@ -554,11 +573,11 @@ function UploadTab({
         <Upload className="mb-2 h-6 w-6 text-muted-foreground" />
         <p className="text-sm font-medium">
           {uploading && progress
-            ? `Uploading ${progress.done} / ${progress.total}…`
-            : "Drop files here or click to browse"}
+            ? t("uploadingProgress", { done: progress.done, total: progress.total })
+            : t("dropFilesHere")}
         </p>
         <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-          CSV · XLSX · XLS · Parquet
+          {t("acceptedFormats")}
         </p>
         <input
           ref={fileInputRef}
@@ -584,12 +603,12 @@ function UploadTab({
           {uploading ? (
             <>
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Uploading
+              {t("uploading")}
             </>
           ) : (
             <>
               <Upload className="h-3.5 w-3.5" />
-              Select files
+              {t("selectFiles")}
             </>
           )}
         </Button>
@@ -613,6 +632,8 @@ function ConnectTab({
   ensureSession: () => Promise<string | null>;
 }) {
   const router = useRouter();
+  const t = useTranslations("Chat");
+  const tc = useTranslations("Common");
   const [submitting, setSubmitting] = useState(false);
   const [type, setType] = useState<
     "pg" | "mysql" | "bigquery" | "duckdb" | "sqlite"
@@ -640,7 +661,7 @@ function ConnectTab({
     e.preventDefault();
     if (submitting) return;
     if (!form.name.trim()) {
-      toast.error("Please enter a display name");
+      toast.error(t("errDisplayNameRequired"));
       return;
     }
     setSubmitting(true);
@@ -657,7 +678,7 @@ function ConnectTab({
       // /sources/new page.
       if (type === "duckdb" || type === "sqlite") {
         if (!file) {
-          toast.error("Please select a database file");
+          toast.error(t("errDatabaseFileRequired"));
           setSubmitting(false);
           return;
         }
@@ -673,7 +694,7 @@ function ConnectTab({
         });
         if (!res.ok) {
           const msg = await res.text();
-          throw new Error(msg || `Request failed: ${res.status}`);
+          throw new Error(msg || tc("failedStatus", { status: res.status }));
         }
         const data = (await res.json()) as {
           reused?: boolean;
@@ -682,13 +703,13 @@ function ConnectTab({
         };
         toast.success(
           data.reused
-            ? "Reused existing data source"
-            : `Data source "${form.name.trim()}" connected`,
+            ? t("toastReusedExisting")
+            : t("toastDataSourceConnectedNamed", { name: form.name.trim() }),
           {
             description: data.indexed
-              ? "Schema indexed successfully"
+              ? t("toastSchemaIndexed")
               : data.indexError
-                ? `Schema indexing failed: ${data.indexError}`
+                ? t("toastSchemaIndexingFailedNamed", { error: data.indexError })
                 : undefined,
           },
         );
@@ -714,7 +735,7 @@ function ConnectTab({
           !form.user.trim() ||
           !form.password.trim()
         ) {
-          toast.error("Please fill in all required database fields");
+          toast.error(t("errDbFieldsRequired"));
           setSubmitting(false);
           return;
         }
@@ -726,7 +747,7 @@ function ConnectTab({
         body.ssl = form.ssl;
       } else if (type === "bigquery") {
         if (!form.projectId.trim() || !form.credentialsJson.trim()) {
-          toast.error("Please fill in projectId and credentialsJson");
+          toast.error(t("errBigqueryFieldsRequired"));
           setSubmitting(false);
           return;
         }
@@ -743,7 +764,7 @@ function ConnectTab({
       });
       if (!res.ok) {
         const msg = await res.text();
-        throw new Error(msg || `Request failed: ${res.status}`);
+        throw new Error(msg || tc("failedStatus", { status: res.status }));
       }
       const data = (await res.json()) as {
         reused?: boolean;
@@ -752,13 +773,13 @@ function ConnectTab({
       };
       toast.success(
         data.reused
-          ? "Reused existing data source"
-          : `Data source "${form.name.trim()}" connected`,
+          ? t("toastReusedExisting")
+          : t("toastDataSourceConnectedNamed", { name: form.name.trim() }),
         {
           description: data.indexed
-            ? "Schema indexed successfully"
+            ? t("toastSchemaIndexed")
             : data.indexError
-              ? `Schema indexing failed: ${data.indexError}`
+              ? t("toastSchemaIndexingFailedNamed", { error: data.indexError })
               : undefined,
         },
       );
@@ -769,7 +790,7 @@ function ConnectTab({
         router.refresh();
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Request failed";
+      const msg = err instanceof Error ? err.message : tc("requestFailed");
       toast.error(msg);
     } finally {
       setSubmitting(false);
@@ -785,17 +806,17 @@ function ConnectTab({
     <form onSubmit={handleSubmit} className="space-y-4">
       {dataSourceMode === "files" && (
         <ModeNotice>
-          This session has uploaded files. You cannot connect to a database. Remove all files first.
+          {t("noticeFilesUploadedRemoveFirst")}
         </ModeNotice>
       )}
       {dataSourceMode === "database" && (
         <ModeNotice>
-          This session is connected to a database. Connecting a new database will replace the existing connection.
+          {t("noticeDbConnectedDisconnectFirst")}
         </ModeNotice>
       )}
       {/* Type selector */}
       <div className="space-y-2">
-        <Label htmlFor="ds-type">Database type</Label>
+        <Label htmlFor="ds-type">{t("labelDatabaseType")}</Label>
         <Select
           id="ds-type"
           value={type}
@@ -813,25 +834,25 @@ function ConnectTab({
               update("port", "3306");
           }}
           options={[
-            { value: "pg", label: "PostgreSQL" },
-            { value: "mysql", label: "MySQL" },
-            { value: "bigquery", label: "BigQuery" },
-            { value: "duckdb", label: "DuckDB file" },
-            { value: "sqlite", label: "SQLite file" },
+            { value: "pg", label: t("dbTypePostgres") },
+            { value: "mysql", label: t("dbTypeMysql") },
+            { value: "bigquery", label: t("dbTypeBigquery") },
+            { value: "duckdb", label: t("labelDuckdbFile") },
+            { value: "sqlite", label: t("labelSqliteFile") },
           ]}
         />
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="ds-name">
-          Display name <span className="text-destructive">*</span>
+          {t("labelDisplayName")} <span className="text-destructive">*</span>
         </Label>
         <Input
           id="ds-name"
           value={form.name}
           disabled={isDisabled || submitting}
           onChange={(e) => update("name", e.target.value)}
-          placeholder="Production analytics"
+          placeholder={t("placeholderDisplayName")}
           required
           autoFocus
         />
@@ -842,7 +863,7 @@ function ConnectTab({
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2 space-y-2">
               <Label htmlFor="ds-host">
-                Host <span className="text-destructive">*</span>
+                {t("labelHost")} <span className="text-destructive">*</span>
               </Label>
               <Input
                 id="ds-host"
@@ -856,7 +877,7 @@ function ConnectTab({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="ds-port">Port</Label>
+              <Label htmlFor="ds-port">{t("labelPort")}</Label>
               <Input
                 id="ds-port"
                 type="number"
@@ -870,7 +891,7 @@ function ConnectTab({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="ds-database">
-                Database <span className="text-destructive">*</span>
+                {t("labelDatabase")} <span className="text-destructive">*</span>
               </Label>
               <Input
                 id="ds-database"
@@ -883,7 +904,7 @@ function ConnectTab({
             </div>
             <div className="space-y-2">
               <Label htmlFor="ds-user">
-                User <span className="text-destructive">*</span>
+                {t("labelUser")} <span className="text-destructive">*</span>
               </Label>
               <Input
                 id="ds-user"
@@ -897,7 +918,7 @@ function ConnectTab({
           </div>
           <div className="space-y-2">
             <Label htmlFor="ds-password">
-              Password <span className="text-destructive">*</span>
+              {t("labelPassword")} <span className="text-destructive">*</span>
             </Label>
             <Input
               id="ds-password"
@@ -910,7 +931,7 @@ function ConnectTab({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="ds-ssl">SSL mode</Label>
+            <Label htmlFor="ds-ssl">{t("labelSslMode")}</Label>
             <Select
               id="ds-ssl"
               value={form.ssl}
@@ -931,7 +952,7 @@ function ConnectTab({
         <>
           <div className="space-y-2">
             <Label htmlFor="ds-project">
-              Project ID <span className="text-destructive">*</span>
+              {t("labelProjectId")} <span className="text-destructive">*</span>
             </Label>
             <Input
               id="ds-project"
@@ -943,7 +964,7 @@ function ConnectTab({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="ds-location">Location</Label>
+            <Label htmlFor="ds-location">{t("labelLocation")}</Label>
             <Input
               id="ds-location"
               value={form.location}
@@ -954,7 +975,7 @@ function ConnectTab({
           </div>
           <div className="space-y-2">
             <Label htmlFor="ds-creds">
-              Service account JSON <span className="text-destructive">*</span>
+              {t("labelServiceAccountJson")} <span className="text-destructive">*</span>
             </Label>
             <Textarea
               id="ds-creds"
@@ -969,7 +990,7 @@ function ConnectTab({
           </div>
           <div className="space-y-2">
             <Label htmlFor="ds-dataset">
-              Default dataset{" "}
+              {t("labelDefaultDataset")}{" "}
               <span className="text-muted-foreground">(optional)</span>
             </Label>
             <Input
@@ -987,7 +1008,7 @@ function ConnectTab({
       {isFileDb && (
         <div className="space-y-2">
           <Label htmlFor="ds-file">
-            {type === "duckdb" ? "DuckDB file" : "SQLite file"}{" "}
+            {type === "duckdb" ? t("labelDuckdbFile") : t("labelSqliteFile")}{" "}
             <span className="text-destructive">*</span>
           </Label>
           <Input
@@ -1015,12 +1036,12 @@ function ConnectTab({
           {submitting ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              Connecting
+              {tc("connecting")}
             </>
           ) : isFileDb ? (
-            "Upload & connect"
+            t("buttonUploadAndConnect")
           ) : (
-            "Connect & index"
+            t("buttonConnectAndIndex")
           )}
         </Button>
       </div>

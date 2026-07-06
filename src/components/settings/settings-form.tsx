@@ -2,6 +2,7 @@
 
 import { useState, useActionState, useEffect } from "react";
 import { useFormStatus } from "react-dom";
+import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Loader2, Pencil, Plus, Plug, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,11 +24,12 @@ interface SettingsFormProps {
   initialStorageConfig: StorageConfig | null;
 }
 
-const PROVIDER_LABELS: Record<LlmConfig["provider"], string> = {
-  openai: "OpenAI",
-  anthropic: "Anthropic",
-  glm: "GLM",
-  "openai-compat": "OpenAI-compatible",
+/** Maps a provider key to its translation message key. */
+const PROVIDER_LABEL_KEYS: Record<LlmConfig["provider"], string> = {
+  openai: "providerOpenai",
+  anthropic: "providerAnthropic",
+  glm: "providerGlm",
+  "openai-compat": "providerOpenaiCompatible",
 };
 
 export function SettingsForm({
@@ -47,10 +49,11 @@ export function SettingsForm({
     ============================================================ */
 function SubmitButton() {
   const { pending } = useFormStatus();
+  const t = useTranslations("Settings");
   return (
     <Button type="submit" size="sm" disabled={pending}>
       {pending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-      Save
+      {t("buttonSave")}
     </Button>
   );
 }
@@ -65,6 +68,7 @@ function ModeToggle({
   mode: "default" | "custom";
   onChange: (mode: "default" | "custom") => void;
 }) {
+  const t = useTranslations("Settings");
   return (
     <div className="inline-flex rounded-lg border border-border p-0.5">
       <button
@@ -76,7 +80,7 @@ function ModeToggle({
             : "text-muted-foreground hover:text-foreground"
         }`}
       >
-        Use default
+        {t("useDefault")}
       </button>
       <button
         type="button"
@@ -87,7 +91,7 @@ function ModeToggle({
             : "text-muted-foreground hover:text-foreground"
         }`}
       >
-        Custom
+        {t("custom")}
       </button>
     </div>
   );
@@ -105,6 +109,7 @@ function EditModal({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  const t = useTranslations("Settings");
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
@@ -118,7 +123,7 @@ function EditModal({
             type="button"
             onClick={onClose}
             className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            aria-label="Close"
+            aria-label={t("closeAriaLabel")}
           >
             <X className="h-4 w-4" />
           </button>
@@ -139,12 +144,13 @@ function SummaryRow({
   summary: string;
   onEdit: () => void;
 }) {
+  const t = useTranslations("Settings");
   return (
     <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-4 py-2.5">
       <span className="text-sm text-muted-foreground">{summary}</span>
       <Button type="button" variant="ghost" size="sm" onClick={onEdit}>
         <Pencil className="h-3.5 w-3.5" />
-        Edit
+        {t("buttonEdit")}
       </Button>
     </div>
   );
@@ -160,6 +166,7 @@ function ModelTagInput({
   models: string[];
   onChange: (models: string[]) => void;
 }) {
+  const t = useTranslations("Settings");
   const [draft, setDraft] = useState("");
 
   function addModel() {
@@ -179,9 +186,9 @@ function ModelTagInput({
 
   return (
     <div className="space-y-2">
-      <Label>Models</Label>
+      <Label>{t("labelModels")}</Label>
       <p className="text-xs text-muted-foreground">
-        Add one or more model names that share this API key. Switch between them in the chat.
+        {t("hintModels")}
       </p>
       <div className="flex gap-2">
         <Input
@@ -194,7 +201,7 @@ function ModelTagInput({
               addModel();
             }
           }}
-          placeholder="e.g. gpt-4o"
+          placeholder={t("placeholderModelName")}
         />
         <Button
           type="button"
@@ -204,7 +211,7 @@ function ModelTagInput({
           disabled={!draft.trim()}
         >
           <Plus className="h-3.5 w-3.5" />
-          Add
+          {t("buttonAdd")}
         </Button>
       </div>
       {models.length > 0 && (
@@ -216,13 +223,13 @@ function ModelTagInput({
             >
               <span className="font-mono">{m}</span>
               {idx === 0 && (
-                <span className="text-[10px] text-muted-foreground">default</span>
+                <span className="text-[10px] text-muted-foreground">{t("defaultBadge")}</span>
               )}
               <button
                 type="button"
                 onClick={() => removeModel(idx)}
                 className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                aria-label={`Remove ${m}`}
+                aria-label={t("removeModelAriaLabel", { model: m })}
               >
                 <X className="h-3 w-3" />
               </button>
@@ -238,6 +245,7 @@ function ModelTagInput({
     LLM Setting Item
     ============================================================ */
 function LlmSettingItem({ initialConfig }: { initialConfig: LlmConfig | null }) {
+  const t = useTranslations("Settings");
   const [open, setOpen] = useState(false);
   const [saveState, formAction] = useActionState(saveLlmSettings, null);
 
@@ -248,6 +256,10 @@ function LlmSettingItem({ initialConfig }: { initialConfig: LlmConfig | null }) 
   const [baseURL, setBaseURL] = useState("");
   const [models, setModels] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
+
+  function providerLabel(p: LlmConfig["provider"]): string {
+    return t(PROVIDER_LABEL_KEYS[p]);
+  }
 
   // Sync form state from initialConfig when modal opens
   useEffect(() => {
@@ -264,20 +276,22 @@ function LlmSettingItem({ initialConfig }: { initialConfig: LlmConfig | null }) 
   useEffect(() => {
     if (!saveState) return;
     if (saveState.ok) {
-      toast.success("LLM settings saved");
+      toast.success(t("toastLlmSaved"));
       setOpen(false);
     } else if (saveState.error) {
-      toast.error(`Save failed: ${saveState.error}`);
+      toast.error(t("toastSaveFailed", { error: saveState.error }));
     }
-  }, [saveState]);
+  }, [saveState, t]);
 
   const summary = initialConfig
-    ? `${PROVIDER_LABELS[initialConfig.provider]} · ${initialConfig.models?.join(", ") ?? "no models"}`
-    : "Using default";
+    ? (initialConfig.models && initialConfig.models.length > 0
+        ? t("summaryLlm", { provider: providerLabel(initialConfig.provider), models: initialConfig.models.join(", ") })
+        : t("summaryLlmNoModels", { provider: providerLabel(initialConfig.provider) }))
+    : t("usingDefault");
 
   async function handleTest() {
     if (!apiKey || models.length === 0) {
-      toast.error("API Key and at least one Model are required");
+      toast.error(t("errApiKeyAndModelRequired"));
       return;
     }
     setTesting(true);
@@ -295,12 +309,16 @@ function LlmSettingItem({ initialConfig }: { initialConfig: LlmConfig | null }) 
       });
       const data = await resp.json();
       if (data.ok) {
-        toast.success("LLM connection successful");
+        toast.success(t("toastLlmTestSuccess"));
       } else {
-        toast.error(`LLM test failed: ${data.error ?? "unknown error"}`);
+        toast.error(t("toastLlmTestFailed", { error: data.error ?? "" }));
       }
     } catch (err) {
-      toast.error(`LLM test failed: ${err instanceof Error ? err.message : "network error"}`);
+      toast.error(
+        err instanceof Error
+          ? t("toastLlmTestFailed", { error: err.message })
+          : t("toastLlmTestFailedNetwork"),
+      );
     } finally {
       setTesting(false);
     }
@@ -309,16 +327,16 @@ function LlmSettingItem({ initialConfig }: { initialConfig: LlmConfig | null }) 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>LLM Provider</CardTitle>
+        <CardTitle>{t("cardLlmProvider")}</CardTitle>
         <CardDescription>
-          Choose a custom chat model provider or use the project default.
+          {t("cardLlmProviderDescription")}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <SummaryRow summary={summary} onEdit={() => setOpen(true)} />
 
         {open && (
-          <EditModal title="Edit LLM Provider" onClose={() => setOpen(false)}>
+          <EditModal title={t("dialogEditLlmProvider")} onClose={() => setOpen(false)}>
             <form action={formAction} className="space-y-4">
               <input type="hidden" name="llmMode" value={mode} />
               <input type="hidden" name="llmProvider" value={provider} />
@@ -329,28 +347,28 @@ function LlmSettingItem({ initialConfig }: { initialConfig: LlmConfig | null }) 
               {mode === "custom" && (
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="llmProviderSelect">Provider</Label>
+                    <Label htmlFor="llmProviderSelect">{t("labelProvider")}</Label>
                     <Select
                       id="llmProviderSelect"
                       value={provider}
                       onChange={(v) => setProvider(v as LlmConfig["provider"])}
                       options={[
-                        { value: "openai", label: "OpenAI" },
-                        { value: "anthropic", label: "Anthropic" },
-                        { value: "glm", label: "GLM (Zhipu)" },
-                        { value: "openai-compat", label: "OpenAI-compatible" },
+                        { value: "openai", label: t("optionOpenai") },
+                        { value: "anthropic", label: t("optionAnthropic") },
+                        { value: "glm", label: t("optionGlmZhipu") },
+                        { value: "openai-compat", label: t("optionOpenaiCompatible") },
                       ]}
                     />
                   </div>
 
                   {provider === "openai-compat" && (
                     <div className="space-y-2">
-                      <Label htmlFor="llmBaseURL">Base URL</Label>
+                      <Label htmlFor="llmBaseURL">{t("labelBaseUrl")}</Label>
                       <Input
                         id="llmBaseURL"
                         name="llmBaseURL"
                         type="url"
-                        placeholder="https://api.deepseek.com/v1"
+                        placeholder={t("placeholderBaseUrl")}
                         value={baseURL}
                         onChange={(e) => setBaseURL(e.target.value)}
                       />
@@ -358,12 +376,12 @@ function LlmSettingItem({ initialConfig }: { initialConfig: LlmConfig | null }) 
                   )}
 
                   <div className="space-y-2">
-                    <Label htmlFor="llmApiKey">API Key</Label>
+                    <Label htmlFor="llmApiKey">{t("labelApiKey")}</Label>
                     <Input
                       id="llmApiKey"
                       name="llmApiKey"
                       type="password"
-                      placeholder="sk-..."
+                      placeholder={t("placeholderApiKey")}
                       value={apiKey}
                       onChange={(e) => setApiKey(e.target.value)}
                     />
@@ -386,7 +404,7 @@ function LlmSettingItem({ initialConfig }: { initialConfig: LlmConfig | null }) 
                   ) : (
                     <Plug className="h-3.5 w-3.5" />
                   )}
-                  Test connection
+                  {t("buttonTestConnection")}
                 </Button>
                 <SubmitButton />
               </div>
@@ -402,6 +420,7 @@ function LlmSettingItem({ initialConfig }: { initialConfig: LlmConfig | null }) 
     Storage Setting Item
     ============================================================ */
 function StorageSettingItem({ initialConfig }: { initialConfig: StorageConfig | null }) {
+  const t = useTranslations("Settings");
   const [open, setOpen] = useState(false);
   const [saveState, formAction] = useActionState(saveStorageSettings, null);
 
@@ -430,20 +449,20 @@ function StorageSettingItem({ initialConfig }: { initialConfig: StorageConfig | 
   useEffect(() => {
     if (!saveState) return;
     if (saveState.ok) {
-      toast.success("Storage settings saved");
+      toast.success(t("toastStorageSaved"));
       setOpen(false);
     } else if (saveState.error) {
-      toast.error(`Save failed: ${saveState.error}`);
+      toast.error(t("toastSaveFailed", { error: saveState.error }));
     }
-  }, [saveState]);
+  }, [saveState, t]);
 
   const summary = initialConfig
-    ? `S3 · ${initialConfig.bucket}`
-    : "Using default";
+    ? t("summaryStorage", { bucket: initialConfig.bucket ?? "" })
+    : t("usingDefault");
 
   async function handleTest() {
     if (!accessKeyId || !secretAccessKey || !bucket) {
-      toast.error("Access Key ID, Secret Access Key, and Bucket are required");
+      toast.error(t("errStorageFieldsRequired"));
       return;
     }
     setTesting(true);
@@ -461,12 +480,16 @@ function StorageSettingItem({ initialConfig }: { initialConfig: StorageConfig | 
       });
       const data = await resp.json();
       if (data.ok) {
-        toast.success("Storage connection successful");
+        toast.success(t("toastStorageTestSuccess"));
       } else {
-        toast.error(`Storage test failed: ${data.error ?? "unknown error"}`);
+        toast.error(t("toastStorageTestFailed", { error: data.error ?? "" }));
       }
     } catch (err) {
-      toast.error(`Storage test failed: ${err instanceof Error ? err.message : "network error"}`);
+      toast.error(
+        err instanceof Error
+          ? t("toastStorageTestFailed", { error: err.message })
+          : t("toastStorageTestFailedNetwork"),
+      );
     } finally {
       setTesting(false);
     }
@@ -475,16 +498,16 @@ function StorageSettingItem({ initialConfig }: { initialConfig: StorageConfig | 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>File Storage</CardTitle>
+        <CardTitle>{t("cardFileStorage")}</CardTitle>
         <CardDescription>
-          Use a custom S3-compatible storage (AWS S3, MinIO, Cloudflare R2, etc.) or the project default.
+          {t("cardFileStorageDescription")}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <SummaryRow summary={summary} onEdit={() => setOpen(true)} />
 
         {open && (
-          <EditModal title="Edit File Storage" onClose={() => setOpen(false)}>
+          <EditModal title={t("dialogEditFileStorage")} onClose={() => setOpen(false)}>
             <form action={formAction} className="space-y-4">
               <input type="hidden" name="storageMode" value={mode} />
 
@@ -493,31 +516,31 @@ function StorageSettingItem({ initialConfig }: { initialConfig: StorageConfig | 
               {mode === "custom" && (
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="s3Endpoint">Endpoint (optional)</Label>
+                    <Label htmlFor="s3Endpoint">{t("labelEndpoint")}</Label>
                     <Input
                       id="s3Endpoint"
                       name="s3Endpoint"
                       type="url"
-                      placeholder="https://minio.example.com:9000"
+                      placeholder={t("placeholderEndpoint")}
                       value={endpoint}
                       onChange={(e) => setEndpoint(e.target.value)}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Leave blank for AWS S3. Set for MinIO, Cloudflare R2, etc.
+                      {t("hintEndpoint")}
                     </p>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="s3Region">Region</Label>
+                    <Label htmlFor="s3Region">{t("labelRegion")}</Label>
                     <Input
                       id="s3Region"
                       name="s3Region"
-                      placeholder="us-east-1"
+                      placeholder={t("placeholderRegion")}
                       value={region}
                       onChange={(e) => setRegion(e.target.value)}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="s3AccessKeyId">Access Key ID</Label>
+                    <Label htmlFor="s3AccessKeyId">{t("labelAccessKeyId")}</Label>
                     <Input
                       id="s3AccessKeyId"
                       name="s3AccessKeyId"
@@ -526,7 +549,7 @@ function StorageSettingItem({ initialConfig }: { initialConfig: StorageConfig | 
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="s3SecretAccessKey">Secret Access Key</Label>
+                    <Label htmlFor="s3SecretAccessKey">{t("labelSecretAccessKey")}</Label>
                     <Input
                       id="s3SecretAccessKey"
                       name="s3SecretAccessKey"
@@ -536,11 +559,11 @@ function StorageSettingItem({ initialConfig }: { initialConfig: StorageConfig | 
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="s3Bucket">Bucket</Label>
+                    <Label htmlFor="s3Bucket">{t("labelBucket")}</Label>
                     <Input
                       id="s3Bucket"
                       name="s3Bucket"
-                      placeholder="my-datellix-bucket"
+                      placeholder={t("placeholderBucket")}
                       value={bucket}
                       onChange={(e) => setBucket(e.target.value)}
                     />
@@ -561,7 +584,7 @@ function StorageSettingItem({ initialConfig }: { initialConfig: StorageConfig | 
                   ) : (
                     <Plug className="h-3.5 w-3.5" />
                   )}
-                  Test connection
+                  {t("buttonTestConnection")}
                 </Button>
                 <SubmitButton />
               </div>

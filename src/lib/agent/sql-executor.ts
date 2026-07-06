@@ -23,6 +23,7 @@ import {
   executeMultiFileSql,
   validateSelectSql,
 } from "@/lib/agent/tools";
+import type { SandboxProvider } from "@/lib/daytona/client";
 import type { SqlResults } from "@/lib/agent/state";
 import type {
   PgConfig,
@@ -127,19 +128,23 @@ async function loadChartDataSources(
 }
 
 /** Dispatch a validated SQL string to the right executor by source type.
- *  For file-based sources, creates a temporary sandbox per call. */
+ *  For file-based sources, creates a temporary sandbox per call unless
+ *  `getSandbox` is provided — in which case the caller-owned sandbox is
+ *  reused (e.g. the batch refresh endpoint shares one sandbox across many
+ *  charts to avoid 8x sandbox creation latency on the library page). */
 async function dispatchSql(
   sources: LoadedDataSource[],
   mode: "database" | "files",
   sessionId: string,
   userId: string,
   sql: string,
+  getSandbox?: SandboxProvider,
 ): Promise<SqlResults> {
   if (mode === "files" || sources.every((s) => s.type === "file")) {
     // Multi-file mode: all sources are file-type
     const fileConfigs = sources.map((s) => s.config as FileConfig);
     const fileMetas = sources.map((s) => s.meta);
-    return executeMultiFileSql(sessionId, fileConfigs, fileMetas, userId, sql);
+    return executeMultiFileSql(sessionId, fileConfigs, fileMetas, userId, sql, getSandbox);
   }
 
   // Single-DB mode
@@ -158,6 +163,7 @@ async function dispatchSql(
         ds.meta,
         userId,
         sql,
+        getSandbox,
       );
     case "sqlite":
       return executeSqliteFileSql(
@@ -166,6 +172,7 @@ async function dispatchSql(
         ds.meta,
         userId,
         sql,
+        getSandbox,
       );
     default:
       throw new Error(`SQL execution not supported for data source type: ${ds.type}`);
@@ -188,11 +195,17 @@ export async function executeSqlForSession(
 }
 
 /** Execute a SQL query against a chart's bound data sources.
- *  Used by /api/charts/[id]/refresh for chart library re-query. */
+ *  Used by /api/charts/[id]/refresh for chart library re-query.
+ *
+ *  When `getSandbox` is provided (batch refresh), the caller owns the
+ *  sandbox lifecycle and this function reuses it instead of creating a
+ *  new sandbox per chart. This is the key optimisation for the library
+ *  page: 8 charts share 1 sandbox instead of creating 8. */
 export async function executeSqlForChart(
   chartId: string,
   sql: string,
   userId: string,
+  getSandbox?: SandboxProvider,
 ): Promise<SqlResults> {
   const validation = validateSelectSql(sql);
   if (!validation.ok) {
@@ -203,5 +216,5 @@ export async function executeSqlForChart(
   // to a single DB source use database mode.
   const mode = sources.every((s) => s.type === "file") ? "files" : "database";
   // Use chartId as the sandbox session id (creates a unique sandbox per chart refresh).
-  return dispatchSql(sources, mode, `chart-${chartId}`, userId, sql);
+  return dispatchSql(sources, mode, `chart-${chartId}`, userId, sql, getSandbox);
 }

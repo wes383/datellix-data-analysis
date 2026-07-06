@@ -54,6 +54,7 @@ export async function POST(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[sessions/query] session ${sessionId} failed:`, err);
     return NextResponse.json(
       { error: `Query failed: ${msg}` },
       { status: 500 },

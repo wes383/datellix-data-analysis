@@ -1,13 +1,15 @@
 "use client";
 
 import { useState, useTransition, useMemo, useEffect } from "react";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { useRouter } from "next/navigation";
+import { useTranslations, useFormatter } from "next-intl";
 import { ChevronDown, ChevronLeft, ChevronRight, Database, LayoutGrid, Loader2, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChartViewer } from "@/components/library/chart-viewer";
+import type { ChartRefreshData } from "@/lib/chart/data";
 
 export interface LibraryChartDataSource {
   id: string;
@@ -41,24 +43,25 @@ interface LibraryGridProps {
   dataSources: LibraryDataSourceOption[];
 }
 
-/** Human-readable label for each data source type (mirrors sources-list). */
-const TYPE_LABELS: Record<string, string> = {
-  pg: "PostgreSQL",
-  mysql: "MySQL",
-  bigquery: "BigQuery",
-  duckdb: "DuckDB file",
-  sqlite: "SQLite file",
-  file: "File",
+/** Maps a data source type key to its translation message key (full labels). */
+const TYPE_LABEL_KEYS: Record<string, string> = {
+  pg: "typePostgres",
+  mysql: "typeMysql",
+  bigquery: "typeBigquery",
+  duckdb: "typeDuckdbFile",
+  sqlite: "typeSqliteFile",
+  file: "typeFile",
 };
 
-/** Compact type badge for the sidebar — short label keeps the list scannable. */
-const TYPE_SHORT: Record<string, string> = {
-  pg: "PG",
-  mysql: "MySQL",
-  bigquery: "BQ",
-  duckdb: "DuckDB",
-  sqlite: "SQLite",
-  file: "File",
+/** Maps a data source type key to its translation message key (short labels).
+ *  These live in the Sources namespace since they are data-source type labels. */
+const TYPE_SHORT_KEYS: Record<string, string> = {
+  pg: "typeShortPostgres",
+  mysql: "typeShortMysql",
+  bigquery: "typeShortBigquery",
+  duckdb: "typeShortDuckdb",
+  sqlite: "typeShortSqlite",
+  file: "typeShortFile",
 };
 
 /** Number of charts shown per page in the grid. */
@@ -77,6 +80,10 @@ const PAGE_SIZE = 8;
  */
 export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
   const router = useRouter();
+  const t = useTranslations("Library");
+  const ts = useTranslations("Sources");
+  const tc = useTranslations("Common");
+  const format = useFormatter();
   const [, startTransition] = useTransition();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
@@ -92,6 +99,29 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
   // Pagination state — 1-indexed current page.
   const [currentPage, setCurrentPage] = useState(1);
 
+  // ---- Batch SQL refresh for the visible page ----
+  // Instead of each ChartViewer fetching its own data (8 separate HTTP
+  // requests, 8 separate Daytona sandboxes), we batch all visible Recharts
+  // charts into one POST /api/charts/refresh-batch call. The server creates
+  // ONE shared sandbox, runs each chart's SQL sequentially, and returns a
+  // results map. We pass `initialData` down to each ChartViewer so it renders
+  // immediately without its own fetch.
+  //
+  // `null` means "no data yet / fetch in progress". A value means "render
+  // from this". An entry of `{ error: "..." }` is stored as null so the
+  // ChartViewer falls back to its own fetch (and shows the error UI).
+  const [batchData, setBatchData] = useState<Record<string, ChartRefreshData | null>>({});
+
+  function typeLabel(type: string): string {
+    const key = TYPE_LABEL_KEYS[type];
+    return key ? ts(key) : type;
+  }
+
+  function typeShort(type: string): string {
+    const key = TYPE_SHORT_KEYS[type];
+    return key ? ts(key) : type;
+  }
+
   async function handleDelete(
     e: React.MouseEvent,
     chart: LibraryChartRow,
@@ -99,7 +129,7 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
     e.preventDefault();
     e.stopPropagation();
     if (deletingId) return;
-    if (!confirm(`Delete chart "${chart.title}"? This cannot be undone.`)) {
+    if (!confirm(t("confirmDeleteChart", { title: chart.title }))) {
       return;
     }
     setDeletingId(chart.id);
@@ -111,13 +141,13 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
         if (!res.ok) {
           const err = await res.json();
           throw new Error(
-            (err as { error?: string }).error || `Failed: ${res.status}`,
+            (err as { error?: string }).error || tc("failedStatus", { status: res.status }),
           );
         }
-        toast.success(`"${chart.title}" deleted`);
+        toast.success(t("toastDeletedNamed", { title: chart.title }));
         router.refresh();
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Delete failed";
+        const msg = err instanceof Error ? err.message : tc("delete");
         toast.error(msg);
       } finally {
         setDeletingId(null);
@@ -159,18 +189,92 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
     setCurrentPage(1);
   }, [activeSourceId, searchQuery]);
 
+  // Batch-fetch SQL results for all Recharts charts on the current page in
+  // ONE request. The server creates a single shared sandbox and runs each
+  // chart's SQL sequentially, returning a results map. This replaces the old
+  // N-fetches-per-page pattern (one per card) and reduces sandbox creation
+  // from N to 1 — a 10-30x latency win for a full page of 8 charts.
+  //
+  // We only batch charts that actually need a fetch: Recharts charts with
+  // stored SQL. Plotly charts render from their stored figure, and charts
+  // without SQL can't be refreshed. Errors per-chart are stored as null so
+  // the ChartViewer falls back to its own fetch + error UI.
+  //
+  // IMPORTANT: do NOT depend on `pageCharts` directly — it's a new array
+  // reference on every render (created via .slice), which would turn this
+  // effect into an infinite setState loop. Depend on a stable string
+  // signature of the eligible chart IDs instead.
+  const eligibleIds = useMemo(
+    () =>
+      pageCharts
+        .filter((c) => c.renderer === "recharts" && c.sql_text)
+        .map((c) => c.id),
+    [pageCharts],
+  );
+  const eligibleSignature = eligibleIds.join(",");
+  useEffect(() => {
+    if (eligibleIds.length === 0) {
+      setBatchData({});
+      return;
+    }
+    const ids = eligibleIds;
+    let cancelled = false;
+    // Mark all eligible charts as "loading" (null) so ChartViewers show
+    // their loading spinner immediately rather than flashing old data.
+    setBatchData((prev) => {
+      const next: Record<string, ChartRefreshData | null> = {};
+      for (const id of ids) next[id] = prev[id] ?? null;
+      return next;
+    });
+    fetch("/api/charts/refresh-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chartIds: ids }),
+    })
+      .then((res) => res.json())
+      .then((data: { results?: Record<string, unknown> }) => {
+        if (cancelled) return;
+        const results = data.results ?? {};
+        const next: Record<string, ChartRefreshData | null> = {};
+        for (const id of ids) {
+          const entry = results[id];
+          // Only successful entries have `columns` — errors become null so
+          // ChartViewer falls back to its own fetch and surfaces the error.
+          if (entry && typeof entry === "object" && "columns" in entry) {
+            next[id] = entry as ChartRefreshData;
+          } else {
+            next[id] = null;
+          }
+        }
+        setBatchData(next);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("[library-grid] batch refresh failed:", err);
+        // On hard failure, set all to null so ChartViewers fall back to
+        // their own per-chart fetch.
+        const next: Record<string, ChartRefreshData | null> = {};
+        for (const id of ids) next[id] = null;
+        setBatchData(next);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eligibleSignature]);
+
   if (charts.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16 text-center">
         <LayoutGrid className="mb-3 h-8 w-8 text-muted-foreground" />
         <p className="text-sm text-muted-foreground">
-          No saved charts yet.
+          {t("emptyStateTitle")}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          Save a chart from a chat session to see it here.
+          {t("emptyStateDescription")}
         </p>
         <Button asChild variant="outline" className="mt-4">
-          <Link href="/chat/new">Start a new chat</Link>
+          <Link href="/chat/new">{t("emptyStateCta")}</Link>
         </Button>
       </div>
     );
@@ -200,22 +304,22 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
               aria-expanded={!filterCollapsed}
               aria-label={
                 filterCollapsed
-                  ? "Expand data source filter"
-                  : "Collapse data source filter"
+                  ? t("expandFilterTitle")
+                  : t("collapseFilterTitle")
               }
               title={
                 filterCollapsed
                   ? activeSourceId
-                    ? `Filter active — expand to change`
-                    : "Expand data source filter"
-                  : "Collapse data source filter"
+                    ? t("filterActiveExpandTitle")
+                    : t("expandFilterTitle")
+                  : t("collapseFilterTitle")
               }
             >
               {filterCollapsed ? (
                 <ChevronRight className="h-3.5 w-3.5" />
               ) : (
                 <>
-                  <span>Filter by data source</span>
+                  <span>{t("filterByDataSource")}</span>
                   <ChevronDown className="h-3 w-3" />
                 </>
               )}
@@ -232,7 +336,7 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
                       : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
                   }`}
                 >
-                  <span>All charts</span>
+                  <span>{t("allChartsOption")}</span>
                   <span className="font-mono text-[10px] text-muted-foreground">
                     {charts.length}
                   </span>
@@ -252,7 +356,7 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
                           ? "bg-accent font-medium text-foreground"
                           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
                       }`}
-                      title={`${TYPE_LABELS[ds.type] ?? ds.type}: ${ds.name}`}
+                      title={`${typeLabel(ds.type)}: ${ds.name}`}
                     >
                       <span className="flex min-w-0 items-center gap-1.5">
                         <Database className="h-3 w-3 shrink-0" />
@@ -260,7 +364,7 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
                       </span>
                       <span className="flex shrink-0 items-center gap-1.5">
                         <span className="rounded border border-border bg-background/60 px-1 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                          {TYPE_SHORT[ds.type] ?? ds.type}
+                          {typeShort(ds.type)}
                         </span>
                         <span className="font-mono text-[10px] text-muted-foreground">
                           {count}
@@ -286,7 +390,7 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
               <Input
                 autoFocus
                 type="text"
-                placeholder="Search by title..."
+                placeholder={t("searchPlaceholder")}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="h-9 pl-9 pr-9"
@@ -298,8 +402,8 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
                   setSearchOpen(false);
                 }}
                 className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                aria-label="Close search"
-                title="Close search"
+                aria-label={t("closeSearchTitle")}
+                title={t("closeSearchTitle")}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -309,8 +413,8 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
               variant="outline"
               size="icon"
               onClick={() => setSearchOpen(true)}
-              aria-label="Search charts"
-              title="Search by title"
+              aria-label={t("searchChartsAriaLabel")}
+              title={t("searchByTitleTitle")}
             >
               <Search className="h-4 w-4" />
             </Button>
@@ -321,8 +425,8 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
           <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16 text-center">
             <p className="text-sm text-muted-foreground">
               {searchQuery.trim()
-                ? "No charts match your search."
-                : "No charts bound to this data source."}
+                ? t("noMatchSearch")
+                : t("noMatchDataSource")}
             </p>
             <Button
               variant="outline"
@@ -332,7 +436,7 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
                 setSearchQuery("");
               }}
             >
-              Show all charts
+              {t("showAllCharts")}
             </Button>
           </div>
         ) : (
@@ -355,6 +459,7 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
                           renderer={chart.renderer}
                           sqlText={chart.sql_text}
                           compact
+                          initialData={batchData[chart.id] ?? undefined}
                         />
                       </div>
                     </div>
@@ -370,8 +475,8 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
                           onClick={(e) => handleDelete(e, chart)}
                           disabled={isDeleting}
                           className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus:opacity-100 group-hover:opacity-100 disabled:opacity-50"
-                          aria-label="Delete chart"
-                          title="Delete"
+                          aria-label={t("deleteChartAriaLabel")}
+                          title={t("deleteTitle")}
                         >
                           {isDeleting ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -389,7 +494,7 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
                           <span
                             key={ds.id}
                             className="inline-flex items-center rounded border border-border bg-background/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
-                            title={`${TYPE_LABELS[ds.type] ?? ds.type}: ${ds.name}`}
+                            title={`${typeLabel(ds.type)}: ${ds.name}`}
                           >
                             {ds.name}
                           </span>
@@ -397,7 +502,7 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
                       </div>
 
                       <p className="mt-auto font-mono text-[10px] text-muted-foreground" suppressHydrationWarning>
-                        Updated {new Date(chart.updated_at).toLocaleDateString()}
+                        {t("updatedLabel")} {format.dateTime(new Date(chart.updated_at), { dateStyle: "medium" })}
                       </p>
                     </div>
                   </Link>
@@ -409,9 +514,11 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
             {totalPages > 1 && (
               <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
                 <p className="text-xs text-muted-foreground">
-                  Showing {startIndex + 1}–
-                  {Math.min(startIndex + PAGE_SIZE, filteredCharts.length)} of{" "}
-                  {filteredCharts.length}
+                  {t("paginationRange", {
+                    start: startIndex + 1,
+                    end: Math.min(startIndex + PAGE_SIZE, filteredCharts.length),
+                    total: filteredCharts.length,
+                  })}
                 </p>
                 <div className="flex items-center gap-2">
                   <Button
@@ -421,10 +528,10 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
                     disabled={safePage <= 1}
                   >
                     <ChevronLeft className="h-4 w-4" />
-                    Previous
+                    {t("paginationPrevious")}
                   </Button>
                   <span className="text-sm text-muted-foreground">
-                    Page {safePage} of {totalPages}
+                    {t("paginationPageOf", { page: safePage, totalPages })}
                   </span>
                   <Button
                     variant="outline"
@@ -434,7 +541,7 @@ export function LibraryGrid({ charts, dataSources }: LibraryGridProps) {
                     }
                     disabled={safePage >= totalPages}
                   >
-                    Next
+                    {t("paginationNext")}
                     <ChevronRight className="h-4 w-4" />
                   </Button>
                 </div>

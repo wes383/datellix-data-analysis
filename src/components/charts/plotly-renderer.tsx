@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslations } from "next-intl";
 import { Download, Maximize2, X } from "lucide-react";
 
 /**
@@ -26,13 +27,18 @@ import { Download, Maximize2, X } from "lucide-react";
 
 // Dynamically import react-plotly.js. The loading fallback shows a brief
 // "Loading chart…" message while the chunk is fetched.
+function PlotLoading() {
+  const tc = useTranslations("Common");
+  return (
+    <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
+      {tc("loadingChart")}
+    </div>
+  );
+}
+
 const Plot = dynamic(() => import("react-plotly.js"), {
   ssr: false,
-  loading: () => (
-    <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
-      Loading chart…
-    </div>
-  ),
+  loading: () => <PlotLoading />,
 });
 
 interface PlotlyRendererProps {
@@ -66,6 +72,8 @@ const TOP_MARGIN_WITH_TITLE = 80;
 const TOP_MARGIN_NO_TITLE = 30;
 
 export function PlotlyRenderer({ figure, title, height, hideControls }: PlotlyRendererProps) {
+  const t = useTranslations("Chat");
+  const tc = useTranslations("Common");
   const chartHeight = height ?? DEFAULT_CHART_HEIGHT;
   const [hasMounted, setHasMounted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -100,7 +108,7 @@ export function PlotlyRenderer({ figure, title, height, hideControls }: PlotlyRe
   if (!hasMounted) {
     return (
       <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
-        Loading chart…
+        {tc("loadingChart")}
       </div>
     );
   }
@@ -182,8 +190,8 @@ export function PlotlyRenderer({ figure, title, height, hideControls }: PlotlyRe
               type="button"
               onClick={handleDownload}
               className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background/80 text-muted-foreground backdrop-blur-sm transition-colors hover:bg-background hover:text-foreground"
-              aria-label="Download chart as PNG"
-              title="Download PNG"
+              aria-label={t("downloadPngAriaLabel")}
+              title={t("downloadPngTitle")}
             >
               <Download className="h-3.5 w-3.5" />
             </button>
@@ -191,8 +199,8 @@ export function PlotlyRenderer({ figure, title, height, hideControls }: PlotlyRe
               type="button"
               onClick={() => setIsFullscreen(true)}
               className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background/80 text-muted-foreground backdrop-blur-sm transition-colors hover:bg-background hover:text-foreground"
-              aria-label="Open chart in fullscreen"
-              title="Fullscreen"
+              aria-label={t("openFullscreenAriaLabel")}
+              title={t("fullscreenTitle")}
             >
               <Maximize2 className="h-3.5 w-3.5" />
             </button>
@@ -239,13 +247,13 @@ export function PlotlyRenderer({ figure, title, height, hideControls }: PlotlyRe
             {/* Overlay header */}
             <div className="flex items-center justify-between border-b border-border px-6 py-3">
               <p className="font-display text-sm font-medium tracking-tight text-foreground">
-                {title ?? "Chart"}
+                {title ?? tc("untitledChart")}
               </p>
               <button
                 type="button"
                 onClick={() => setIsFullscreen(false)}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                aria-label="Close fullscreen"
+                aria-label={t("closeFullscreenAriaLabel")}
               >
                 <X className="h-4 w-4" />
               </button>

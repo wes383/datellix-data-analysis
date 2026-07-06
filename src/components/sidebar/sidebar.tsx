@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, Link } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import {
   Plus,
   Trash2,
@@ -25,6 +26,7 @@ interface SidebarProps {
 const COLLAPSE_KEY = "sidebar:collapsed";
 
 export function Sidebar({ sessions }: SidebarProps) {
+  const t = useTranslations("Sidebar");
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -87,10 +89,13 @@ export function Sidebar({ sessions }: SidebarProps) {
   // Fixed nav items shared between expanded and collapsed layouts.
   // Settings is rendered in the footer (bottom) instead of here, so the
   // user can reach it the way they previously reached Sign out.
+  // The `href` is the locale-unaware path; next/link will preserve the
+  // current locale prefix automatically because we render via the [locale]
+  // segment — Next.js' built-in Link reuses the active locale.
   const navItems = [
-    { href: "/sources", label: "Data sources", icon: Database },
-    { href: "/library", label: "Chart library", icon: LayoutGrid },
-    { href: "/usage", label: "Usage", icon: BarChart3 },
+    { href: "/sources", label: t("dataSources"), icon: Database },
+    { href: "/library", label: t("chartLibrary"), icon: LayoutGrid },
+    { href: "/usage", label: t("usage"), icon: BarChart3 },
   ];
 
   return (
@@ -112,8 +117,8 @@ export function Sidebar({ sessions }: SidebarProps) {
           className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground ${
             collapsed ? "translate-x-[3px]" : ""
           }`}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={collapsed ? t("expandSidebar") : t("collapseSidebar")}
+          title={collapsed ? t("expandSidebar") : t("collapseSidebar")}
         >
           {collapsed ? (
             <ChevronsRight className="h-4 w-4" />
@@ -131,11 +136,11 @@ export function Sidebar({ sessions }: SidebarProps) {
           className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors text-muted-foreground hover:bg-accent/50 hover:text-foreground ${
             collapsed ? "justify-center" : ""
           }`}
-          title="New session"
-          aria-label="New session"
+          title={t("newSession")}
+          aria-label={t("newSession")}
         >
           <Plus className="h-3.5 w-3.5 shrink-0" />
-          {collapsed ? null : <span>New session</span>}
+          {collapsed ? null : <span>{t("newSession")}</span>}
         </button>
         {navItems.map((item) => {
           const Icon = item.icon;
@@ -167,7 +172,7 @@ export function Sidebar({ sessions }: SidebarProps) {
             collapsed ? "text-center" : ""
           }`}
         >
-          {collapsed ? "···" : "Sessions"}
+          {collapsed ? "···" : t("sessions")}
         </p>
         {collapsed ? (
           // Collapsed: show numbered badges (1-based) so users can distinguish
@@ -184,7 +189,7 @@ export function Sidebar({ sessions }: SidebarProps) {
                         ? "bg-accent text-foreground"
                         : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                     }`}
-                    title={s.title ?? "Untitled session"}
+                    title={s.title ?? t("untitledSession")}
                   >
                     <span
                       style={{ fontFamily: '"Plus Jakarta Sans", "Inter", system-ui, sans-serif' }}
@@ -201,7 +206,7 @@ export function Sidebar({ sessions }: SidebarProps) {
           <ul className="space-y-0.5">
             {sessions.length === 0 ? (
               <li className="px-2 py-2 text-xs text-muted-foreground">
-                No sessions yet.
+                {t("noSessions")}
               </li>
             ) : (
               sessions.map((s) => {
@@ -221,13 +226,13 @@ export function Sidebar({ sessions }: SidebarProps) {
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      {s.title ?? "Untitled session"}
+                      {s.title ?? t("untitledSession")}
                     </Link>
                     <button
                       type="button"
                       onClick={(e) => handleDelete(e, s.id)}
                       className="shrink-0 p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus:opacity-100 group-hover:opacity-100"
-                      aria-label="Delete session"
+                      aria-label={t("deleteSession")}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -239,7 +244,7 @@ export function Sidebar({ sessions }: SidebarProps) {
         )}
       </nav>
 
-      {/* Footer — Settings (Sign out has moved to the Settings page) */}
+      {/* Footer — Settings link (Sign out + Language switcher have moved to the Settings page) */}
       <div className="border-t border-border px-2 py-2">
         <Link
           href="/settings"
@@ -250,10 +255,10 @@ export function Sidebar({ sessions }: SidebarProps) {
               ? "bg-accent font-medium text-foreground"
               : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
           }`}
-          title="Settings"
+          title={t("settings")}
         >
           <Settings className="h-3.5 w-3.5 shrink-0" />
-          {collapsed ? null : <span>Settings</span>}
+          {collapsed ? null : <span>{t("settings")}</span>}
         </Link>
       </div>
     </aside>

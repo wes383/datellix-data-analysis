@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef, useEffect, useRef, useState } from "react";
+import { useTranslations, useFormatter } from "next-intl";
 import { toPng } from "html-to-image";
 import { BarChart3, Bookmark, Code2, Download, FileText, FileDown, LineChart, Loader2, RefreshCw, Table2 } from "lucide-react";
 import {
@@ -28,6 +29,7 @@ import type {
   SummaryPayload,
   TablePayload,
 } from "@/lib/agent/state";
+import { buildChartData } from "@/lib/chart/data";
 
 /**
  * Frontend artifact shape (mirrors the SSE stream payload from /api/chat).
@@ -68,17 +70,17 @@ interface ArtifactRendererProps {
   dataSourceIds?: string[];
 }
 
-const ARTIFACT_META: Record<
+const ARTIFACT_ICON: Record<
   ArtifactType,
-  { label: string; icon: React.ComponentType<{ className?: string }> }
+  React.ComponentType<{ className?: string }>
 > = {
-  chart: { label: "Chart", icon: BarChart3 },
-  table: { label: "Table", icon: Table2 },
-  code: { label: "Code", icon: Code2 },
-  forecast: { label: "Forecast", icon: LineChart },
-  summary: { label: "Summary", icon: FileText },
-  file: { label: "File", icon: FileDown },
-  report: { label: "Report", icon: FileText },
+  chart: BarChart3,
+  table: Table2,
+  code: Code2,
+  forecast: LineChart,
+  summary: FileText,
+  file: FileDown,
+  report: FileText,
 };
 
 /**
@@ -99,6 +101,8 @@ function DownloadMenu({
   rows: unknown[][];
   baseName: string;
 }) {
+  const t = useTranslations("Chat");
+  const tc = useTranslations("Common");
   const [open, setOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -145,8 +149,8 @@ function DownloadMenu({
         onClick={() => setOpen((v) => !v)}
         disabled={exporting}
         className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-        aria-label="Download"
-        title="Download"
+        aria-label={tc("download")}
+        title={tc("download")}
       >
         {exporting ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -157,9 +161,9 @@ function DownloadMenu({
       {open && (
         <div className="absolute right-0 top-full z-50 mt-1 min-w-[140px] overflow-hidden rounded-md border border-border bg-white p-1 shadow-lg">
           {([
-            { fmt: "xlsx" as const, label: "Excel (.xlsx)" },
-            { fmt: "csv" as const, label: "CSV (.csv)" },
-            { fmt: "json" as const, label: "JSON (.json)" },
+            { fmt: "xlsx" as const, label: t("downloadExcel") },
+            { fmt: "csv" as const, label: t("downloadCsv") },
+            { fmt: "json" as const, label: t("downloadJson") },
           ]).map((opt) => (
             <button
               key={opt.fmt}
@@ -197,6 +201,8 @@ function ReportDownloadMenu({
   reportRef: React.RefObject<HTMLDivElement | null>;
   payload: ReportPayload;
 }) {
+  const t = useTranslations("Chat");
+  const tc = useTranslations("Common");
   const [open, setOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -249,8 +255,8 @@ function ReportDownloadMenu({
         onClick={() => setOpen((v) => !v)}
         disabled={exporting}
         className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-        aria-label="Download"
-        title="Download"
+        aria-label={tc("download")}
+        title={tc("download")}
       >
         {exporting ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -265,14 +271,14 @@ function ReportDownloadMenu({
             onClick={handlePdf}
             className="flex w-full cursor-pointer items-center px-2.5 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent"
           >
-            PDF (.pdf)
+            {t("downloadPdf")}
           </button>
           <button
             type="button"
             onClick={handleMarkdownZip}
             className="flex w-full cursor-pointer items-center px-2.5 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent"
           >
-            Markdown (.zip)
+            {t("downloadMarkdownZip")}
           </button>
         </div>
       )}
@@ -294,8 +300,23 @@ export function ArtifactRenderer({
   sessionId,
   dataSourceIds,
 }: ArtifactRendererProps) {
-  const meta = ARTIFACT_META[artifact.type];
-  const Icon = meta.icon;
+  const t = useTranslations("Chat");
+  const tc = useTranslations("Common");
+  const Icon = ARTIFACT_ICON[artifact.type];
+
+  /** Map an artifact type to a human-readable label. */
+  function getArtifactLabel(type: ArtifactType): string {
+    const map: Record<ArtifactType, string> = {
+      chart: t("artifactChart"),
+      table: t("artifactTable"),
+      code: t("artifactCode"),
+      forecast: t("artifactForecast"),
+      summary: t("artifactSummary"),
+      file: t("artifactFile"),
+      report: t("artifactReport"),
+    };
+    return map[type];
+  }
 
   // Ref to the Recharts container DOM node, used for PNG export.
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -419,7 +440,7 @@ export function ArtifactRenderer({
       ? {
           columns: (effectivePayload as TablePayload).columns,
           rows: (effectivePayload as TablePayload).rows,
-          baseName: (effectivePayload as TablePayload).title ?? "table",
+          baseName: (effectivePayload as TablePayload).title ?? t("defaultTableTitle"),
         }
       : {
           columns: (effectivePayload as FilePayload).columns,
@@ -463,7 +484,7 @@ export function ArtifactRenderer({
       <div className="mb-3 flex items-center gap-2 border-b border-border pb-2">
         <Icon className="h-3.5 w-3.5 text-muted-foreground" />
         <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-          {meta.label}
+          {getArtifactLabel(artifact.type)}
           {artifact.node ? ` · ${artifact.node}` : ""}
         </span>
         {canSaveToLibrary && (
@@ -471,8 +492,8 @@ export function ArtifactRenderer({
             type="button"
             onClick={() => setSaveOpen(true)}
             className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            aria-label="Save to library"
-            title="Save to library"
+            aria-label={t("saveToLibrary")}
+            title={t("saveToLibrary")}
           >
             <Bookmark className="h-3.5 w-3.5" />
           </button>
@@ -490,8 +511,8 @@ export function ArtifactRenderer({
             onClick={handlePngExport}
             disabled={exporting}
             className={`${canSaveToLibrary ? "" : "ml-auto"} inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50`}
-            aria-label="Download PNG"
-            title="Download PNG"
+            aria-label={t("downloadPngTitle")}
+            title={t("downloadPngTitle")}
           >
             {exporting ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -514,12 +535,12 @@ export function ArtifactRenderer({
           <div className="flex h-40 items-center justify-center gap-2">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             <span className="text-sm text-muted-foreground">
-              Re-loading data…
+              {t("reloadingData")}
             </span>
           </div>
         ) : rehydrateError ? (
           <div className="flex flex-col items-center justify-center gap-2 py-8">
-            <p className="text-sm text-muted-foreground">Data unavailable</p>
+            <p className="text-sm text-muted-foreground">{tc("dataUnavailable")}</p>
             <p className="max-w-md break-words text-center font-mono text-[10px] text-muted-foreground/70">
               {rehydrateError}
             </p>
@@ -532,11 +553,11 @@ export function ArtifactRenderer({
               className="mt-2"
             >
               <RefreshCw className="h-3 w-3" />
-              Retry
+              {tc("retry")}
             </Button>
           </div>
         ) : (
-          renderBody(effectiveArtifact, chartContainerRef, reportContainerRef)
+          renderBody(effectiveArtifact, chartContainerRef, reportContainerRef, t)
         )}
       </div>
 
@@ -557,7 +578,7 @@ export function ArtifactRenderer({
             renderer={
               chartPayloadForSave.renderer === "plotly" ? "plotly" : "recharts"
             }
-            defaultTitle={chartPayloadForSave.title ?? "Untitled chart"}
+            defaultTitle={chartPayloadForSave.title ?? tc("untitledChart")}
             sessionId={sessionId}
             dataSourceIds={dataSourceIds}
           />
@@ -570,6 +591,7 @@ function renderBody(
   artifact: ArtifactView,
   chartContainerRef: React.Ref<HTMLDivElement>,
   reportContainerRef: React.Ref<HTMLDivElement>,
+  t: ReturnType<typeof useTranslations>,
 ): React.ReactNode {
   switch (artifact.type) {
     case "chart": {
@@ -620,7 +642,7 @@ function renderBody(
     default:
       return (
         <p className="text-sm text-muted-foreground">
-          Unknown artifact type
+          {t("unknownArtifactType")}
         </p>
       );
   }
@@ -634,6 +656,7 @@ function renderBody(
  *  Shows filename, row/column counts, and a prominent Download CSV button.
  *  No inline table — the user's intent is to download, not inspect rows. */
 function FileArtifactView({ payload }: { payload: FilePayload }) {
+  const t = useTranslations("Chat");
   const { filename, columns, rowCount, title, truncated } = payload;
   return (
     <div className="flex items-center gap-3 py-1">
@@ -643,8 +666,8 @@ function FileArtifactView({ payload }: { payload: FilePayload }) {
           {title ?? filename}
         </p>
         <p className="text-xs text-muted-foreground">
-          {filename}.csv · {rowCount.toLocaleString()} row{rowCount === 1 ? "" : "s"} · {columns.length} column{columns.length === 1 ? "" : "s"}
-          {truncated ? " · truncated" : ""}
+          {t("csvFilename", { filename })} · {t("rowsColumnsCount", { rows: String(rowCount), columns: String(columns.length) })}
+          {truncated ? ` · ${t("truncated")}` : ""}
         </p>
       </div>
     </div>
@@ -652,11 +675,12 @@ function FileArtifactView({ payload }: { payload: FilePayload }) {
 }
 
 function TableArtifactView({ payload }: { payload: TablePayload }) {
+  const t = useTranslations("Chat");
   const { columns, rows, title } = payload;
 
   if (!columns || columns.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">Empty result set</p>
+      <p className="text-sm text-muted-foreground">{t("emptyResultSet")}</p>
     );
   }
 
@@ -702,9 +726,9 @@ function TableArtifactView({ payload }: { payload: TablePayload }) {
         </Table>
       </div>
       <p className="mt-2 font-mono text-[10px] text-muted-foreground">
-        {rows.length} {rows.length === 1 ? "row" : "rows"}
-        {rows.length >= 1000 ? " · truncated at 1000 (max)" : ""}
-        {payload.truncated ? " · truncated" : ""}
+        {t("rowCountLabel", { count: rows.length })}
+        {rows.length >= 1000 ? ` · ${t("truncatedAtMax")}` : ""}
+        {payload.truncated ? ` · ${t("truncated")}` : ""}
       </p>
     </div>
   );
@@ -880,11 +904,13 @@ const ReportArtifactView = forwardRef<
   HTMLDivElement,
   { payload: ReportPayload }
 >(function ReportArtifactView({ payload }, ref) {
+  const t = useTranslations("Chat");
+  const format = useFormatter();
   const { content, title, metadata, referencedArtifactIds, embeddedArtifacts } = payload;
 
   // Format generatedAt as a human-readable timestamp.
   const generatedAtDisplay = metadata?.generatedAt
-    ? new Date(metadata.generatedAt).toLocaleString()
+    ? format.dateTime(new Date(metadata.generatedAt), { dateStyle: "medium", timeStyle: "short" })
     : null;
 
   // Build a lookup map (id → artifact) for inline rendering. Embedded
@@ -934,7 +960,7 @@ const ReportArtifactView = forwardRef<
             // so the user can see something went wrong (and where).
             return (
               <p key={i} className="my-2 text-sm italic text-slate-400">
-                [artifact:{id} not available]
+                {t("artifactNotAvailable", { id })}
               </p>
             );
           }
@@ -984,10 +1010,10 @@ const ReportArtifactView = forwardRef<
         {(generatedAtDisplay || (metadata?.dataSourceNames && metadata.dataSourceNames.length > 0)) && (
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
             {generatedAtDisplay && (
-              <span>Generated: {generatedAtDisplay}</span>
+              <span>{t("generatedLabel")} {generatedAtDisplay}</span>
             )}
             {metadata?.dataSourceNames && metadata.dataSourceNames.length > 0 && (
-              <span>Data sources: {metadata.dataSourceNames.join(", ")}</span>
+              <span>{t("dataSourcesLabel")} {metadata.dataSourceNames.join(", ")}</span>
             )}
           </div>
         )}
@@ -1007,9 +1033,9 @@ const ReportArtifactView = forwardRef<
           className="mt-6 border-t border-slate-200 pt-3 text-xs text-slate-500"
         >
           <span className="font-mono uppercase tracking-wider">
-            References
+            {t("referencesLabel")}
           </span>
-          : {referencedArtifactIds.length} artifact(s)
+          : {t("artifactsCount", { count: referencedArtifactIds.length })}
         </div>
       )}
     </div>
@@ -1027,6 +1053,7 @@ const ForecastArtifactView = forwardRef<
   HTMLDivElement,
   { payload: ForecastPayload }
 >(function ForecastArtifactView({ payload }, ref) {
+  const t = useTranslations("Chat");
   const { method, horizon, metrics, predictions, summary } = payload;
 
   // Build chart data: one row per prediction entry. `actual` and `forecast`
@@ -1051,13 +1078,13 @@ const ForecastArtifactView = forwardRef<
           data: chartData,
           xKey: "date",
           yKeys: ["actual", "forecast"],
-          title: `${method.toUpperCase()} Forecast · ${horizon} periods`,
+          title: t("forecastSummary", { method: method.toUpperCase(), horizon }),
         }}
       />
       <dl className="mt-3 grid grid-cols-3 gap-2 border-t border-border pt-3">
         <div className="space-y-0.5">
           <dt className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            MAE
+            {t("metricMae")}
           </dt>
           <dd className="font-mono text-sm font-medium text-foreground">
             {metrics.mae.toFixed(2)}
@@ -1065,7 +1092,7 @@ const ForecastArtifactView = forwardRef<
         </div>
         <div className="space-y-0.5">
           <dt className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            RMSE
+            {t("metricRmse")}
           </dt>
           <dd className="font-mono text-sm font-medium text-foreground">
             {metrics.rmse.toFixed(2)}
@@ -1073,7 +1100,7 @@ const ForecastArtifactView = forwardRef<
         </div>
         <div className="space-y-0.5">
           <dt className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            MAPE
+            {t("metricMape")}
           </dt>
           <dd className="font-mono text-sm font-medium text-foreground">
             {metrics.mape.toFixed(1)}%
@@ -1114,30 +1141,6 @@ function formatStat(value: number): string {
     return value.toExponential(2);
   }
   return value.toFixed(4);
-}
-
-/**
- * Build a chart data array (array of row objects keyed by column name) from
- * re-queried columns + array rows. Mirrors the logic in chart-viewer.tsx:
- * numeric strings are coerced to numbers so Recharts renders axes correctly.
- * Capped at 100 rows (same as the in-memory chart render limit).
- */
-function buildChartData(
-  columns: string[],
-  rows: unknown[][],
-): Record<string, unknown>[] {
-  return rows.slice(0, 100).map((row) => {
-    const obj: Record<string, unknown> = {};
-    columns.forEach((col, idx) => {
-      const val = row[idx];
-      if (typeof val === "string" && val !== "" && !isNaN(Number(val))) {
-        obj[col] = Number(val);
-      } else {
-        obj[col] = val;
-      }
-    });
-    return obj;
-  });
 }
 
 /* ============================================================
