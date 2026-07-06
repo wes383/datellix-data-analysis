@@ -4,7 +4,7 @@
 
 Built on Next.js 16, LangGraph, Supabase, and the Daytona code sandbox.
 
---
+---
 
 ## Highlights
 
