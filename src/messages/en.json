@@ -104,6 +104,7 @@
     "languageDescription": "Choose the interface language. Applied immediately and remembered for future visits.",
     "pageTitle": "Settings",
     "pageDescription": "Configure your LLM provider, file storage, and account preferences. Changes apply to all your chat sessions.",
+    "pageDisclaimer": "Project defaults may run out of quota and are not guaranteed to be available.",
     "sectionAccount": "Account",
     "signedInAs": "Signed in as {email}",
     "signedInAsFallback": "Signed in as user",

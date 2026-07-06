@@ -104,6 +104,7 @@
     "languageDescription": "选择界面语言。立即应用并记住以供下次访问。",
     "pageTitle": "设置",
     "pageDescription": "配置 LLM 提供商、文件存储和账户偏好。更改适用于你的所有聊天会话。",
+    "pageDisclaimer": "默认配置可能会耗尽额度，不保证始终可用。",
     "sectionAccount": "账户",
     "signedInAs": "已登录为 {email}",
     "signedInAsFallback": "已登录",

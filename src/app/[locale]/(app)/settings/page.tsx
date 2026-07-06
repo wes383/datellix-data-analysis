@@ -72,6 +72,9 @@ export default async function SettingsPage({ params }: PageProps) {
           <p className="mt-1 text-sm text-muted-foreground">
             {t("pageDescription")}
           </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t("pageDisclaimer")}
+          </p>
         </div>
 
         <SettingsForm

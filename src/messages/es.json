@@ -104,6 +104,7 @@
     "languageDescription": "Elige el idioma de la interfaz. Se aplica inmediatamente y se recuerda para futuras visitas.",
     "pageTitle": "Configuración",
     "pageDescription": "Configura tu proveedor LLM, almacenamiento de archivos y preferencias de cuenta. Los cambios aplican a todas tus sesiones de chat.",
+    "pageDisclaimer": "Las configuraciones predeterminadas del proyecto pueden quedarse sin cuota y no se garantiza su disponibilidad.",
     "sectionAccount": "Cuenta",
     "signedInAs": "Sesión iniciada como {email}",
     "signedInAsFallback": "Sesión iniciada",
