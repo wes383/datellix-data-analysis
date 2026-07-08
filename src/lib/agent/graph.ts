@@ -198,8 +198,12 @@ export async function* streamAgent(params: {
    *  models in the chat UI). Ignored when llmConfig is null (env default). */
   model?: string;
   getSandbox?: SandboxProvider;
+  /** Optional abort signal — when aborted, the stream stops and the
+   *  underlying LLM/tool calls are cancelled. Used by the eval harness
+   *  to enforce per-case timeouts. */
+  signal?: AbortSignal;
 }) {
-  const { sessionId, question, dataSourceId, dataSourceType, fileDataSourceIds, userId, llmConfig, model, getSandbox } = params;
+  const { sessionId, question, dataSourceId, dataSourceType, fileDataSourceIds, userId, llmConfig, model, getSandbox, signal } = params;
 
   const ctx: AgentContext = {
     sessionId,
@@ -268,6 +272,7 @@ export async function* streamAgent(params: {
       // tool step, so 10 SQL calls alone consume 20 steps before the final
       // answer; 40 leaves comfortable headroom.
       recursionLimit: 40,
+      signal,
     },
   );
 

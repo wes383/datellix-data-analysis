@@ -9,7 +9,9 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "db:push": "supabase db push",
-    "db:reset": "supabase db reset"
+    "db:reset": "supabase db reset",
+    "eval": "tsx --env-file=.env.local --tsconfig tsconfig.json scripts/eval-agent.ts",
+    "list-eval-resources": "tsx --env-file=.env.local --tsconfig tsconfig.json scripts/list-eval-resources.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1078.0",
@@ -58,6 +60,7 @@
     "eslint-config-next": "^16.2.9",
     "postcss": "^8.5.16",
     "tailwindcss": "^3.4.19",
+    "tsx": "^4.19.2",
     "typescript": "^5.9.3"
   }
 }

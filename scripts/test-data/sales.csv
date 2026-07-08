@@ -1,0 +1,301 @@
+order_id,order_date,category,sub_category,product_name,region,segment,sales,quantity,discount,profit
+ORD-0112,2023-01-06,Office Supplies,Paper,A4 Paper Ream,South,Corporate,18.16,3,0.15,0.65
+ORD-0176,2023-01-07,Furniture,Chairs,Office Chair,West,Home Office,1611.9,9,0,299.81
+ORD-0272,2023-01-09,Office Supplies,Paper,A4 Paper Ream,East,Consumer,10.5,2,0.2,1.23
+ORD-0276,2023-01-11,Furniture,Bookcases,Wooden Bookshelf,East,Home Office,691.65,5,0,147.32
+ORD-0084,2023-01-15,Office Supplies,Paper,A4 Paper Ream,East,Corporate,24.96,3,0,4.62
+ORD-0004,2023-01-17,Office Supplies,Paper,A4 Paper Ream,East,Home Office,18.08,2,0,1.45
+ORD-0001,2023-01-19,Electronics,Accessories,Wireless Mouse,South,Consumer,29.87,1,0,3.88
+ORD-0207,2023-01-21,Office Supplies,Binders,3-Ring Binder,West,Consumer,123.12,9,0.05,9.11
+ORD-0213,2023-01-21,Furniture,Bookcases,Wooden Bookshelf,East,Home Office,747.94,7,0.2,-1.5
+ORD-0111,2023-01-28,Office Supplies,Paper,A4 Paper Ream,South,Consumer,8.32,1,0,1.78
+ORD-0186,2023-02-03,Furniture,Bookcases,Wooden Bookshelf,West,Consumer,854.78,7,0.2,85.48
+ORD-0133,2023-02-04,Office Supplies,Pens,Ballpoint Pen Pack,West,Home Office,49.98,5,0.15,5.1
+ORD-0035,2023-02-06,Electronics,Laptops,Laptop Air,West,Corporate,3382.6,4,0.3,-20.3
+ORD-0027,2023-02-08,Electronics,Laptops,Laptop Air,West,Consumer,7478.34,6,0.05,860.01
+ORD-0231,2023-02-10,Furniture,Bookcases,Wooden Bookshelf,North,Home Office,234.05,2,0.2,21.06
+ORD-0256,2023-02-11,Furniture,Chairs,Office Chair,West,Consumer,693.52,5,0.15,29.82
+ORD-0038,2023-02-15,Office Supplies,Binders,3-Ring Binder,East,Corporate,94.08,8,0.2,0.09
+ORD-0109,2023-02-16,Furniture,Tables,Standing Desk,North,Consumer,2619.75,5,0,440.12
+ORD-0117,2023-02-16,Furniture,Chairs,Office Chair,East,Consumer,1894.48,8,0,388.37
+ORD-0181,2023-02-23,Electronics,Laptops,Laptop Air,North,Home Office,8786.44,8,0.05,667.77
+ORD-0237,2023-03-04,Furniture,Bookcases,Wooden Bookshelf,South,Home Office,1322.88,8,0,133.61
+ORD-0032,2023-03-08,Electronics,Laptops,Laptop Air,West,Home Office,11119.44,8,0,1189.78
+ORD-0258,2023-03-09,Office Supplies,Binders,3-Ring Binder,West,Home Office,27,2,0,4.62
+ORD-0292,2023-03-11,Furniture,Chairs,Office Chair,South,Corporate,660.68,4,0,68.05
+ORD-0171,2023-03-16,Office Supplies,Binders,3-Ring Binder,West,Corporate,115.71,7,0.05,9.84
+ORD-0138,2023-03-18,Office Supplies,Pens,Ballpoint Pen Pack,South,Corporate,36.72,3,0.15,4.04
+ORD-0278,2023-03-21,Office Supplies,Paper,A4 Paper Ream,West,Home Office,13.76,2,0,2.89
+ORD-0168,2023-03-30,Office Supplies,Pens,Ballpoint Pen Pack,South,Corporate,77.28,7,0,16.77
+ORD-0253,2023-03-31,Furniture,Bookcases,Wooden Bookshelf,North,Consumer,1202.04,7,0,92.56
+ORD-0041,2023-04-03,Office Supplies,Pens,Ballpoint Pen Pack,North,Corporate,97.31,9,0.15,11.29
+ORD-0063,2023-04-03,Office Supplies,Binders,3-Ring Binder,East,Home Office,15.9,1,0,2.96
+ORD-0056,2023-04-04,Office Supplies,Pens,Ballpoint Pen Pack,East,Corporate,119.88,9,0,19.42
+ORD-0146,2023-04-06,Furniture,Chairs,Office Chair,East,Consumer,825.85,5,0,109.01
+ORD-0083,2023-04-13,Electronics,Accessories,USB-C Hub,East,Consumer,450.8,10,0,96.02
+ORD-0090,2023-04-14,Electronics,Laptops,Laptop Air,East,Home Office,7295.18,6,0.1,824.36
+ORD-0215,2023-04-14,Furniture,Chairs,Office Chair,East,Home Office,451.33,4,0.3,-1.35
+ORD-0233,2023-04-15,Furniture,Chairs,Office Chair,North,Consumer,2059.65,10,0.1,364.56
+ORD-0153,2023-04-20,Office Supplies,Binders,3-Ring Binder,West,Consumer,11.76,1,0.3,-0.24
+ORD-0047,2023-04-23,Electronics,Accessories,USB-C Hub,North,Consumer,452.47,9,0.1,53.39
+ORD-0094,2023-04-26,Electronics,Laptops,Laptop Air,West,Corporate,3312.45,3,0,728.74
+ORD-0081,2023-04-30,Electronics,Phones,Smartphone Pro,West,Consumer,3328.67,4,0.3,29.96
+ORD-0203,2023-05-01,Electronics,Phones,Smartphone Pro,East,Consumer,5970.02,9,0.2,143.28
+ORD-0165,2023-05-07,Furniture,Tables,Standing Desk,South,Corporate,3353.28,7,0,704.19
+ORD-0254,2023-05-08,Furniture,Chairs,Office Chair,East,Corporate,710.43,3,0,95.91
+ORD-0046,2023-05-09,Electronics,Laptops,Laptop Air,West,Corporate,9893.18,8,0.15,1009.1
+ORD-0288,2023-05-10,Electronics,Accessories,Wireless Mouse,East,Consumer,100.92,5,0.2,4.34
+ORD-0059,2023-05-11,Office Supplies,Pens,Ballpoint Pen Pack,West,Corporate,42.34,4,0.1,3.22
+ORD-0175,2023-05-12,Office Supplies,Paper,A4 Paper Ream,East,Corporate,29.12,4,0,3.12
+ORD-0238,2023-05-13,Furniture,Bookcases,Wooden Bookshelf,East,Consumer,170.29,1,0.1,8
+ORD-0208,2023-05-15,Furniture,Chairs,Office Chair,North,Consumer,333.13,2,0.1,11.33
+ORD-0228,2023-05-15,Office Supplies,Binders,3-Ring Binder,South,Consumer,141.6,8,0,23.22
+ORD-0140,2023-05-16,Office Supplies,Paper,A4 Paper Ream,West,Corporate,5.51,1,0.15,0.4
+ORD-0218,2023-05-16,Office Supplies,Pens,Ballpoint Pen Pack,North,Home Office,76.44,7,0,17.12
+ORD-0074,2023-05-19,Electronics,Laptops,Laptop Air,West,Corporate,4260.72,4,0,524.07
+ORD-0052,2023-05-20,Electronics,Accessories,USB-C Hub,West,Consumer,374.85,9,0,55.48
+ORD-0239,2023-05-20,Electronics,Accessories,USB-C Hub,South,Consumer,441,9,0,89.96
+ORD-0144,2023-05-21,Furniture,Chairs,Office Chair,East,Home Office,1114.4,8,0.3,-43.46
+ORD-0290,2023-05-23,Office Supplies,Pens,Ballpoint Pen Pack,East,Corporate,9.72,1,0,1.06
+ORD-0234,2023-05-24,Electronics,Accessories,Wireless Mouse,East,Corporate,250.56,9,0,41.34
+ORD-0189,2023-05-26,Office Supplies,Pens,Ballpoint Pen Pack,West,Consumer,106.56,10,0.2,7.14
+ORD-0287,2023-05-27,Electronics,Accessories,USB-C Hub,South,Home Office,114.95,3,0.15,8.16
+ORD-0209,2023-05-30,Electronics,Phones,Smartphone Pro,South,Consumer,1528.47,2,0.1,132.98
+ORD-0129,2023-06-02,Office Supplies,Pens,Ballpoint Pen Pack,South,Corporate,40.8,4,0,5.71
+ORD-0280,2023-06-05,Electronics,Phones,Smartphone Pro,North,Corporate,3026.97,3,0,472.21
+ORD-0099,2023-06-14,Furniture,Chairs,Office Chair,South,Home Office,1034.8,5,0,140.73
+ORD-0024,2023-06-20,Furniture,Tables,Standing Desk,North,Corporate,3458.07,7,0.1,152.16
+ORD-0264,2023-06-23,Furniture,Tables,Standing Desk,West,Home Office,1117.76,2,0,209.02
+ORD-0283,2023-06-24,Office Supplies,Binders,3-Ring Binder,East,Corporate,139.05,9,0,12.93
+ORD-0031,2023-06-25,Furniture,Chairs,Office Chair,North,Corporate,1432.8,8,0,236.41
+ORD-0085,2023-06-28,Office Supplies,Pens,Ballpoint Pen Pack,South,Consumer,66,5,0,12.08
+ORD-0077,2023-07-05,Electronics,Accessories,USB-C Hub,East,Corporate,364.56,8,0,80.57
+ORD-0096,2023-07-05,Electronics,Phones,Smartphone Pro,North,Corporate,1098.9,1,0,207.69
+ORD-0152,2023-07-05,Furniture,Tables,Standing Desk,South,Corporate,1896.2,4,0,324.25
+ORD-0185,2023-07-06,Electronics,Phones,Smartphone Pro,West,Corporate,8541.45,10,0.1,657.69
+ORD-0022,2023-07-07,Furniture,Chairs,Office Chair,South,Corporate,991.02,6,0,86.22
+ORD-0033,2023-07-08,Electronics,Accessories,USB-C Hub,South,Corporate,208.25,5,0,42.69
+ORD-0188,2023-07-09,Furniture,Tables,Standing Desk,North,Consumer,2410.17,6,0.3,-96.41
+ORD-0300,2023-07-09,Furniture,Tables,Standing Desk,East,Home Office,2964.06,6,0,500.93
+ORD-0036,2023-07-22,Office Supplies,Paper,A4 Paper Ream,South,Home Office,8.64,1,0,1.62
+ORD-0023,2023-07-24,Furniture,Chairs,Office Chair,West,Home Office,1916.37,10,0.1,252.96
+ORD-0169,2023-07-30,Furniture,Chairs,Office Chair,West,Consumer,1031.62,6,0.2,3.09
+ORD-0093,2023-08-03,Electronics,Accessories,Wireless Mouse,West,Corporate,121.8,4,0,28.01
+ORD-0161,2023-08-05,Electronics,Phones,Smartphone Pro,South,Consumer,4195.8,4,0,784.61
+ORD-0159,2023-08-09,Office Supplies,Binders,3-Ring Binder,West,Corporate,104.9,7,0.1,6.61
+ORD-0018,2023-08-10,Furniture,Chairs,Office Chair,East,Home Office,1894.48,8,0,306.91
+ORD-0142,2023-08-11,Electronics,Accessories,Wireless Mouse,West,Consumer,268.83,9,0,45.43
+ORD-0045,2023-08-13,Electronics,Accessories,Wireless Mouse,West,Corporate,121.1,4,0.1,12.96
+ORD-0250,2023-08-15,Furniture,Chairs,Office Chair,South,Corporate,1809.91,10,0.15,10.86
+ORD-0263,2023-08-17,Electronics,Accessories,Wireless Mouse,West,Consumer,22.45,1,0.1,1.37
+ORD-0128,2023-08-19,Furniture,Chairs,Office Chair,West,Corporate,1576.08,8,0.1,209.62
+ORD-0173,2023-08-23,Electronics,Phones,Smartphone Pro,East,Home Office,4475.52,4,0,939.86
+ORD-0119,2023-08-25,Furniture,Tables,Standing Desk,South,Consumer,3426.63,9,0.3,-71.96
+ORD-0212,2023-08-25,Office Supplies,Binders,3-Ring Binder,West,Home Office,48.3,4,0.3,-3.67
+ORD-0182,2023-08-26,Electronics,Laptops,Laptop Air,East,Consumer,8820.21,7,0,1605.28
+ORD-0154,2023-08-28,Furniture,Chairs,Office Chair,North,Home Office,634.01,3,0.1,60.86
+ORD-0054,2023-08-29,Office Supplies,Pens,Ballpoint Pen Pack,West,Corporate,80.64,7,0,6.37
+ORD-0137,2023-09-02,Office Supplies,Paper,A4 Paper Ream,North,Consumer,44.74,7,0.15,2.77
+ORD-0204,2023-09-03,Furniture,Bookcases,Wooden Bookshelf,South,Consumer,610.56,4,0,109.9
+ORD-0135,2023-09-09,Electronics,Accessories,USB-C Hub,East,Consumer,49.98,1,0,6.2
+ORD-0091,2023-09-11,Furniture,Bookcases,Wooden Bookshelf,West,Consumer,356.16,2,0,65.18
+ORD-0205,2023-09-17,Office Supplies,Paper,A4 Paper Ream,West,Corporate,72.96,8,0,10.14
+ORD-0270,2023-09-17,Furniture,Tables,Standing Desk,West,Home Office,1649.69,4,0.05,151.77
+ORD-0252,2023-09-21,Furniture,Tables,Standing Desk,North,Home Office,3564.86,8,0.05,210.33
+ORD-0293,2023-09-21,Furniture,Bookcases,Wooden Bookshelf,East,Consumer,954,5,0,167.9
+ORD-0279,2023-09-22,Furniture,Bookcases,Wooden Bookshelf,North,Home Office,277.61,2,0.1,15.55
+ORD-0179,2023-09-25,Electronics,Laptops,Laptop Air,South,Consumer,6546.96,7,0.1,955.86
+ORD-0014,2023-09-26,Furniture,Tables,Standing Desk,South,Consumer,1437.12,3,0,250.06
+ORD-0089,2023-10-06,Electronics,Accessories,USB-C Hub,North,Corporate,372.4,8,0,43.57
+ORD-0076,2023-10-09,Furniture,Bookcases,Wooden Bookshelf,East,Consumer,648.72,4,0,99.25
+ORD-0174,2023-10-10,Electronics,Phones,Smartphone Pro,West,Home Office,7696.3,8,0.1,1062.09
+ORD-0282,2023-10-11,Electronics,Laptops,Laptop Air,South,Consumer,4281.5,4,0.2,-4.28
+ORD-0080,2023-10-13,Electronics,Phones,Smartphone Pro,North,Consumer,6954.54,9,0.15,765
+ORD-0224,2023-10-13,Office Supplies,Pens,Ballpoint Pen Pack,East,Home Office,11.04,1,0,2
+ORD-0296,2023-10-18,Electronics,Accessories,USB-C Hub,South,Consumer,205.8,5,0,37.46
+ORD-0087,2023-10-22,Furniture,Bookcases,Wooden Bookshelf,North,Consumer,529.47,3,0,119.66
+ORD-0160,2023-11-01,Office Supplies,Paper,A4 Paper Ream,South,Corporate,71.14,8,0.05,11.31
+ORD-0015,2023-11-02,Furniture,Tables,Standing Desk,West,Consumer,3664.66,8,0.1,296.84
+ORD-0025,2023-11-08,Furniture,Chairs,Office Chair,South,Home Office,1518.77,8,0.1,198.96
+ORD-0232,2023-11-11,Electronics,Accessories,USB-C Hub,East,Corporate,476.28,10,0.1,34.77
+ORD-0297,2023-11-11,Office Supplies,Pens,Ballpoint Pen Pack,North,Corporate,22.68,3,0.3,1.09
+ORD-0274,2023-11-13,Office Supplies,Paper,A4 Paper Ream,West,Consumer,29.79,4,0.05,4.95
+ORD-0220,2023-11-17,Electronics,Phones,Smartphone Pro,East,Home Office,7832.16,8,0,853.71
+ORD-0141,2023-11-18,Electronics,Accessories,Wireless Mouse,North,Consumer,77.26,3,0.2,1.93
+ORD-0167,2023-11-20,Furniture,Chairs,Office Chair,West,Consumer,1277.58,6,0,223.58
+ORD-0211,2023-11-21,Furniture,Bookcases,Wooden Bookshelf,East,Home Office,294.79,2,0.1,19.75
+ORD-0227,2023-11-27,Furniture,Tables,Standing Desk,North,Consumer,2180.63,5,0.05,152.64
+ORD-0107,2023-12-03,Furniture,Tables,Standing Desk,East,Home Office,2295.4,5,0,355.79
+ORD-0273,2023-12-12,Electronics,Phones,Smartphone Pro,West,Consumer,5638.36,8,0.15,761.18
+ORD-0198,2023-12-20,Office Supplies,Binders,3-Ring Binder,North,Home Office,25.11,2,0.1,3.92
+ORD-0194,2023-12-22,Furniture,Bookcases,Wooden Bookshelf,North,Home Office,1335.6,10,0,148.25
+ORD-0009,2024-01-08,Office Supplies,Paper,A4 Paper Ream,North,Consumer,43.2,5,0,3.84
+ORD-0060,2024-01-11,Electronics,Accessories,USB-C Hub,South,Corporate,128.97,4,0.3,-2.84
+ORD-0178,2024-01-12,Furniture,Bookcases,Wooden Bookshelf,North,Consumer,1204.19,9,0.15,126.44
+ORD-0103,2024-01-13,Furniture,Tables,Standing Desk,West,Home Office,4221.54,9,0,603.68
+ORD-0120,2024-01-13,Electronics,Accessories,Wireless Mouse,South,Corporate,52.34,2,0.05,8.22
+ORD-0201,2024-01-15,Electronics,Laptops,Laptop Air,North,Consumer,12035.24,10,0.15,1143.35
+ORD-0202,2024-01-15,Furniture,Tables,Standing Desk,North,Consumer,2850.29,7,0.15,324.93
+ORD-0226,2024-01-17,Office Supplies,Binders,3-Ring Binder,West,Home Office,110.4,8,0,20.53
+ORD-0265,2024-01-17,Electronics,Phones,Smartphone Pro,North,Home Office,2319.68,3,0.1,396.67
+ORD-0051,2024-01-18,Furniture,Bookcases,Wooden Bookshelf,South,Home Office,527.88,4,0,111.38
+ORD-0180,2024-01-18,Electronics,Laptops,Laptop Air,South,Home Office,10781.7,10,0,1994.61
+ORD-0071,2024-01-21,Electronics,Laptops,Laptop Air,South,Corporate,5351.88,5,0.2,256.89
+ORD-0199,2024-01-24,Furniture,Bookcases,Wooden Bookshelf,North,Corporate,453.15,3,0,66.16
+ORD-0082,2024-01-26,Office Supplies,Paper,A4 Paper Ream,South,Consumer,34.1,7,0.3,0.58
+ORD-0229,2024-01-26,Office Supplies,Paper,A4 Paper Ream,North,Corporate,32.8,5,0,5.18
+ORD-0245,2024-01-28,Furniture,Chairs,Office Chair,South,Corporate,1194,6,0,118.21
+ORD-0062,2024-01-29,Office Supplies,Paper,A4 Paper Ream,North,Corporate,45.7,7,0.15,5.26
+ORD-0011,2024-01-30,Furniture,Bookcases,Wooden Bookshelf,East,Home Office,1373.76,9,0,123.64
+ORD-0016,2024-01-31,Office Supplies,Binders,3-Ring Binder,East,Home Office,146.78,10,0.05,12.62
+ORD-0066,2024-01-31,Office Supplies,Paper,A4 Paper Ream,North,Corporate,35.28,6,0.3,-0.46
+ORD-0139,2024-02-01,Furniture,Bookcases,Wooden Bookshelf,South,Consumer,171.72,1,0,27.65
+ORD-0020,2024-02-02,Furniture,Tables,Standing Desk,East,Consumer,4750.48,10,0.2,-99.76
+ORD-0040,2024-02-05,Furniture,Bookcases,Wooden Bookshelf,North,Consumer,1494.6,10,0,288.46
+ORD-0104,2024-02-05,Electronics,Accessories,Wireless Mouse,East,Corporate,174.58,7,0,38.23
+ORD-0003,2024-02-07,Electronics,Laptops,Laptop Air,South,Home Office,12918.55,10,0.15,310.05
+ORD-0124,2024-02-07,Electronics,Laptops,Laptop Air,North,Corporate,1766.64,2,0.2,217.3
+ORD-0225,2024-02-07,Furniture,Chairs,Office Chair,East,Corporate,1671.6,7,0,354.38
+ORD-0219,2024-02-10,Furniture,Bookcases,Wooden Bookshelf,West,Home Office,189.21,1,0,40.3
+ORD-0098,2024-02-14,Office Supplies,Pens,Ballpoint Pen Pack,East,Corporate,19.99,2,0.3,1.14
+ORD-0127,2024-02-16,Electronics,Laptops,Laptop Air,South,Corporate,10171.17,9,0,1556.19
+ORD-0222,2024-02-21,Office Supplies,Pens,Ballpoint Pen Pack,East,Consumer,11.88,1,0,2.52
+ORD-0028,2024-02-22,Electronics,Accessories,USB-C Hub,West,Consumer,498.09,10,0.05,62.26
+ORD-0291,2024-02-23,Office Supplies,Binders,3-Ring Binder,South,Corporate,149.17,10,0.15,14.32
+ORD-0113,2024-02-24,Electronics,Accessories,USB-C Hub,West,Corporate,325.85,7,0,72.99
+ORD-0021,2024-02-25,Office Supplies,Pens,Ballpoint Pen Pack,East,Consumer,14.16,1,0,1.78
+ORD-0266,2024-02-28,Furniture,Chairs,Office Chair,West,Home Office,334.92,2,0.15,9.71
+ORD-0294,2024-03-03,Electronics,Accessories,Wireless Mouse,South,Consumer,175.74,6,0,39.89
+ORD-0006,2024-03-10,Electronics,Phones,Smartphone Pro,West,Corporate,1958.04,2,0,377.9
+ORD-0072,2024-03-11,Office Supplies,Pens,Ballpoint Pen Pack,South,Home Office,52.32,4,0,6.54
+ORD-0043,2024-03-13,Furniture,Chairs,Office Chair,North,Corporate,1203.55,9,0.3,-45.73
+ORD-0136,2024-03-16,Electronics,Accessories,Wireless Mouse,East,Corporate,61.71,2,0.05,3.46
+ORD-0275,2024-03-18,Electronics,Accessories,Wireless Mouse,West,Consumer,258.39,9,0.1,21.19
+ORD-0150,2024-03-19,Electronics,Laptops,Laptop Air,South,Corporate,11015.52,10,0.2,1343.89
+ORD-0251,2024-03-21,Electronics,Accessories,Wireless Mouse,West,Corporate,187.34,8,0.05,8.8
+ORD-0106,2024-03-23,Office Supplies,Binders,3-Ring Binder,North,Corporate,155.25,9,0,17.7
+ORD-0230,2024-03-25,Office Supplies,Binders,3-Ring Binder,North,Home Office,47.7,3,0,5.01
+ORD-0271,2024-03-25,Electronics,Phones,Smartphone Pro,West,Home Office,1294.7,2,0.2,16.83
+ORD-0115,2024-03-27,Electronics,Laptops,Laptop Air,East,Corporate,3121.5,3,0.1,511.93
+ORD-0131,2024-03-30,Office Supplies,Pens,Ballpoint Pen Pack,West,Consumer,87.36,8,0,9.35
+ORD-0067,2024-04-14,Electronics,Accessories,Wireless Mouse,West,Corporate,173.3,9,0.2,-2.6
+ORD-0122,2024-04-22,Electronics,Accessories,Wireless Mouse,East,Home Office,65.57,2,0.05,3.08
+ORD-0187,2024-04-23,Furniture,Bookcases,Wooden Bookshelf,North,Consumer,961.63,9,0.2,-3.85
+ORD-0214,2024-05-02,Electronics,Accessories,USB-C Hub,North,Consumer,252.35,5,0,33.06
+ORD-0151,2024-05-04,Electronics,Laptops,Laptop Air,West,Home Office,11535.12,8,0,2353.16
+ORD-0108,2024-05-05,Furniture,Tables,Standing Desk,North,Corporate,2844.3,5,0,255.99
+ORD-0148,2024-05-05,Electronics,Laptops,Laptop Air,South,Consumer,2883.78,2,0,493.13
+ORD-0162,2024-05-05,Electronics,Accessories,USB-C Hub,West,Consumer,232.75,5,0,33.98
+ORD-0172,2024-05-05,Office Supplies,Binders,3-Ring Binder,East,Consumer,71.25,5,0,14.53
+ORD-0221,2024-05-07,Office Supplies,Pens,Ballpoint Pen Pack,North,Home Office,88.32,8,0,8.13
+ORD-0125,2024-05-11,Office Supplies,Paper,A4 Paper Ream,West,Corporate,67.2,10,0,13.71
+ORD-0123,2024-05-13,Furniture,Tables,Standing Desk,South,Consumer,2514.96,6,0.2,251.5
+ORD-0210,2024-05-13,Furniture,Tables,Standing Desk,East,Consumer,1197.6,2,0,219.16
+ORD-0261,2024-05-14,Office Supplies,Pens,Ballpoint Pen Pack,East,Corporate,37.38,5,0.3,2.62
+ORD-0134,2024-05-15,Office Supplies,Pens,Ballpoint Pen Pack,West,Home Office,62.75,7,0.1,2.7
+ORD-0249,2024-05-15,Electronics,Accessories,USB-C Hub,East,Corporate,113.68,2,0,9.89
+ORD-0017,2024-05-16,Office Supplies,Binders,3-Ring Binder,North,Corporate,135.6,8,0,21.7
+ORD-0010,2024-05-22,Furniture,Bookcases,Wooden Bookshelf,West,Home Office,1113,7,0,117.98
+ORD-0155,2024-05-23,Electronics,Accessories,USB-C Hub,North,Corporate,588,10,0,121.13
+ORD-0281,2024-05-25,Electronics,Laptops,Laptop Air,West,Consumer,7774.51,9,0.3,-489.79
+ORD-0216,2024-05-26,Electronics,Phones,Smartphone Pro,West,Home Office,3380.62,4,0.1,135.22
+ORD-0184,2024-05-27,Office Supplies,Paper,A4 Paper Ream,North,Consumer,30.1,4,0.05,3.61
+ORD-0078,2024-05-28,Electronics,Accessories,USB-C Hub,South,Corporate,119.95,3,0.2,14.87
+ORD-0048,2024-06-01,Office Supplies,Pens,Ballpoint Pen Pack,North,Consumer,26.88,2,0,4.65
+ORD-0100,2024-06-01,Office Supplies,Binders,3-Ring Binder,North,Corporate,78.3,6,0,16.05
+ORD-0277,2024-06-01,Furniture,Tables,Standing Desk,East,Corporate,4086.81,7,0,935.88
+ORD-0247,2024-06-02,Electronics,Phones,Smartphone Pro,West,Corporate,706.29,1,0.3,43.08
+ORD-0235,2024-06-05,Electronics,Accessories,Wireless Mouse,East,Home Office,149.2,7,0.3,6.71
+ORD-0005,2024-06-09,Office Supplies,Paper,A4 Paper Ream,West,Corporate,42.56,7,0.2,3.58
+ORD-0262,2024-06-11,Electronics,Accessories,Wireless Mouse,North,Home Office,231.42,10,0.3,6.48
+ORD-0064,2024-06-13,Electronics,Accessories,Wireless Mouse,South,Corporate,209.06,9,0.1,8.57
+ORD-0019,2024-06-18,Furniture,Chairs,Office Chair,West,Home Office,618.19,3,0.05,111.27
+ORD-0097,2024-06-19,Electronics,Accessories,Wireless Mouse,North,Corporate,238.96,8,0,36.32
+ORD-0190,2024-06-19,Office Supplies,Pens,Ballpoint Pen Pack,North,Home Office,92.82,10,0.15,14.02
+ORD-0037,2024-06-22,Furniture,Bookcases,Wooden Bookshelf,North,Corporate,179.67,1,0,19.4
+ORD-0073,2024-06-22,Office Supplies,Binders,3-Ring Binder,South,Consumer,106.05,7,0,10.29
+ORD-0191,2024-06-22,Furniture,Tables,Standing Desk,East,Home Office,2920.15,7,0.05,163.53
+ORD-0192,2024-06-28,Office Supplies,Binders,3-Ring Binder,North,Corporate,116.55,7,0,16.78
+ORD-0095,2024-06-29,Furniture,Bookcases,Wooden Bookshelf,East,Home Office,329.13,2,0.1,10.53
+ORD-0183,2024-06-30,Electronics,Phones,Smartphone Pro,North,Corporate,3326.67,3,0,665.33
+ORD-0223,2024-06-30,Furniture,Tables,Standing Desk,North,Consumer,296.9,1,0.3,18.7
+ORD-0240,2024-07-01,Electronics,Accessories,USB-C Hub,North,Home Office,514.5,10,0,101.36
+ORD-0164,2024-07-07,Furniture,Chairs,Office Chair,East,Corporate,234.82,1,0,40.15
+ORD-0196,2024-07-08,Office Supplies,Paper,A4 Paper Ream,East,Consumer,43.01,7,0.2,3.61
+ORD-0034,2024-07-11,Electronics,Accessories,USB-C Hub,North,Home Office,360.64,8,0,80.78
+ORD-0042,2024-07-11,Furniture,Tables,Standing Desk,South,Corporate,1332.33,3,0,101.26
+ORD-0126,2024-07-15,Office Supplies,Pens,Ballpoint Pen Pack,North,Home Office,13.57,1,0.05,1.76
+ORD-0206,2024-07-15,Office Supplies,Pens,Ballpoint Pen Pack,North,Corporate,99.96,7,0,19.59
+ORD-0058,2024-07-20,Furniture,Chairs,Office Chair,West,Home Office,1750.7,9,0.15,85.78
+ORD-0242,2024-07-20,Furniture,Bookcases,Wooden Bookshelf,East,Corporate,1685.4,10,0,222.47
+ORD-0269,2024-07-20,Office Supplies,Paper,A4 Paper Ream,West,Corporate,5.04,1,0.3,-0.02
+ORD-0132,2024-07-22,Office Supplies,Paper,A4 Paper Ream,East,Corporate,5.71,1,0.3,-0.02
+ORD-0217,2024-07-23,Furniture,Bookcases,Wooden Bookshelf,South,Home Office,1685.4,10,0,311.8
+ORD-0244,2024-07-23,Electronics,Laptops,Laptop Air,East,Home Office,6819.75,5,0,1179.82
+ORD-0069,2024-07-26,Office Supplies,Pens,Ballpoint Pen Pack,South,Consumer,96,8,0,12.29
+ORD-0029,2024-07-28,Electronics,Laptops,Laptop Air,West,Home Office,13216.68,9,0.05,1070.55
+ORD-0105,2024-07-30,Furniture,Tables,Standing Desk,East,Consumer,2178.14,5,0.1,78.41
+ORD-0295,2024-07-31,Electronics,Laptops,Laptop Air,South,Consumer,8588.99,8,0.05,1734.98
+ORD-0157,2024-08-02,Electronics,Accessories,USB-C Hub,East,Home Office,267.25,6,0.1,11.22
+ORD-0053,2024-08-04,Office Supplies,Binders,3-Ring Binder,North,Home Office,62.4,4,0,5.05
+ORD-0121,2024-08-06,Electronics,Accessories,Wireless Mouse,West,Corporate,127.6,5,0,19.27
+ORD-0236,2024-08-08,Office Supplies,Binders,3-Ring Binder,East,Consumer,66.3,5,0.15,1.06
+ORD-0299,2024-08-11,Office Supplies,Paper,A4 Paper Ream,North,Corporate,37.3,6,0.3,0.04
+ORD-0285,2024-08-18,Office Supplies,Paper,A4 Paper Ream,North,Home Office,51.84,8,0,11.15
+ORD-0118,2024-08-20,Electronics,Laptops,Laptop Air,West,Consumer,6488.51,5,0.1,720.22
+ORD-0012,2024-08-26,Furniture,Chairs,Office Chair,West,Home Office,1544.24,8,0,126.63
+ORD-0170,2024-08-29,Furniture,Tables,Standing Desk,West,Home Office,3178.63,7,0,445.01
+ORD-0260,2024-08-30,Electronics,Laptops,Laptop Air,South,Consumer,10456.95,7,0,1066.61
+ORD-0068,2024-09-01,Office Supplies,Paper,A4 Paper Ream,South,Home Office,36.36,5,0.1,6.11
+ORD-0070,2024-09-07,Office Supplies,Binders,3-Ring Binder,North,Corporate,23.2,2,0.15,1.88
+ORD-0075,2024-09-07,Electronics,Accessories,USB-C Hub,East,Home Office,321.05,8,0.3,-2.57
+ORD-0086,2024-09-07,Electronics,Laptops,Laptop Air,East,Home Office,11171.4,10,0,2156.08
+ORD-0255,2024-09-13,Furniture,Bookcases,Wooden Bookshelf,East,Corporate,143.1,1,0,13.02
+ORD-0163,2024-09-15,Electronics,Phones,Smartphone Pro,South,Consumer,8471.52,8,0,1186.01
+ORD-0158,2024-09-20,Furniture,Bookcases,Wooden Bookshelf,East,Home Office,842.86,6,0.05,75.86
+ORD-0002,2024-09-21,Office Supplies,Paper,A4 Paper Ream,East,Consumer,91.2,10,0,15.78
+ORD-0110,2024-09-21,Furniture,Chairs,Office Chair,East,Home Office,1370.12,10,0.15,53.43
+ORD-0166,2024-09-21,Electronics,Accessories,USB-C Hub,East,Corporate,276.36,6,0,23.21
+ORD-0248,2024-09-21,Furniture,Tables,Standing Desk,South,Corporate,2844.3,6,0,574.55
+ORD-0259,2024-09-22,Furniture,Bookcases,Wooden Bookshelf,West,Home Office,779.1,5,0,178.41
+ORD-0149,2024-09-23,Electronics,Laptops,Laptop Air,South,Corporate,2909.76,2,0,590.68
+ORD-0055,2024-09-25,Electronics,Laptops,Laptop Air,North,Home Office,1192.48,1,0.1,35.77
+ORD-0200,2024-09-25,Office Supplies,Paper,A4 Paper Ream,North,Home Office,7.44,1,0,0.68
+ORD-0177,2024-09-26,Furniture,Bookcases,Wooden Bookshelf,North,Home Office,1717.2,9,0,125.36
+ORD-0050,2024-10-01,Electronics,Accessories,Wireless Mouse,West,Consumer,266.8,10,0,30.95
+ORD-0007,2024-10-07,Electronics,Accessories,Wireless Mouse,West,Consumer,70.47,3,0,8.67
+ORD-0145,2024-10-08,Furniture,Bookcases,Wooden Bookshelf,South,Consumer,785.22,7,0.15,113.86
+ORD-0102,2024-10-09,Electronics,Laptops,Laptop Air,West,Consumer,5023.88,5,0.15,733.49
+ORD-0030,2024-10-13,Office Supplies,Paper,A4 Paper Ream,West,Home Office,6.85,1,0.2,0.42
+ORD-0193,2024-10-14,Furniture,Tables,Standing Desk,North,Home Office,3242.5,6,0.05,654.98
+ORD-0298,2024-10-19,Office Supplies,Pens,Ballpoint Pen Pack,North,Home Office,108,10,0,10.48
+ORD-0065,2024-10-28,Electronics,Laptops,Laptop Air,West,Consumer,11041.5,10,0,2075.8
+ORD-0013,2024-10-29,Electronics,Laptops,Laptop Air,North,Consumer,4728.36,4,0,969.31
+ORD-0057,2024-11-02,Furniture,Bookcases,Wooden Bookshelf,South,Consumer,594.66,5,0.15,83.25
+ORD-0079,2024-11-03,Electronics,Laptops,Laptop Air,North,Home Office,3460.54,3,0.2,179.95
+ORD-0130,2024-11-04,Office Supplies,Paper,A4 Paper Ream,West,Corporate,26.38,4,0.15,1.4
+ORD-0039,2024-11-10,Office Supplies,Binders,3-Ring Binder,West,Corporate,36.34,3,0.15,1.38
+ORD-0241,2024-11-10,Office Supplies,Pens,Ballpoint Pen Pack,West,Home Office,78.72,8,0,14.64
+ORD-0286,2024-11-12,Furniture,Bookcases,Wooden Bookshelf,West,Home Office,474.38,3,0.15,29.41
+ORD-0257,2024-11-13,Furniture,Bookcases,Wooden Bookshelf,East,Home Office,173.31,1,0,29.81
+ORD-0092,2024-11-22,Electronics,Laptops,Laptop Air,North,Consumer,11691,10,0,1075.57
+ORD-0284,2024-11-23,Electronics,Laptops,Laptop Air,South,Home Office,13912.29,9,0,3172
+ORD-0268,2024-11-26,Office Supplies,Paper,A4 Paper Ream,North,Home Office,58.24,7,0,8.62
+ORD-0147,2024-11-28,Electronics,Accessories,Wireless Mouse,South,Home Office,144.54,8,0.3,-3.76
+ORD-0026,2024-12-03,Furniture,Tables,Standing Desk,West,Home Office,4271.44,8,0,845.75
+ORD-0101,2024-12-03,Office Supplies,Pens,Ballpoint Pen Pack,North,Consumer,38.02,4,0.2,0.8
+ORD-0289,2024-12-03,Office Supplies,Paper,A4 Paper Ream,East,Home Office,34.56,5,0.2,2.52
+ORD-0246,2024-12-04,Furniture,Chairs,Office Chair,South,Consumer,979.08,6,0,159.59
+ORD-0143,2024-12-05,Furniture,Tables,Standing Desk,East,Consumer,3592.8,8,0,531.73
+ORD-0197,2024-12-05,Electronics,Laptops,Laptop Air,East,Corporate,5845.5,5,0,911.9
+ORD-0267,2024-12-06,Furniture,Bookcases,Wooden Bookshelf,East,Consumer,264.58,2,0.2,8.73
+ORD-0114,2024-12-10,Furniture,Chairs,Office Chair,South,Corporate,794.01,5,0.05,161.98
+ORD-0156,2024-12-12,Office Supplies,Paper,A4 Paper Ream,North,Consumer,57.12,7,0,13.02
+ORD-0008,2024-12-17,Office Supplies,Paper,A4 Paper Ream,North,Home Office,44.64,6,0,4.06
+ORD-0195,2024-12-20,Furniture,Bookcases,Wooden Bookshelf,North,Consumer,1132.08,8,0,242.27
+ORD-0049,2024-12-26,Furniture,Tables,Standing Desk,South,Home Office,4550.88,8,0,596.17
+ORD-0088,2024-12-27,Office Supplies,Paper,A4 Paper Ream,West,Home Office,75.2,10,0,5.64
+ORD-0044,2024-12-28,Electronics,Accessories,Wireless Mouse,East,Home Office,112.16,5,0.15,13.35
+ORD-0061,2024-12-28,Electronics,Accessories,USB-C Hub,North,Home Office,252.84,6,0,43.24
+ORD-0243,2024-12-30,Electronics,Accessories,USB-C Hub,South,Home Office,235.98,7,0.2,6.37
+ORD-0116,2024-12-31,Office Supplies,Binders,3-Ring Binder,North,Corporate,79.8,8,0.3,-0.64

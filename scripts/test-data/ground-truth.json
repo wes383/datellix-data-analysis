@@ -1,0 +1,314 @@
+{
+  "schema": {
+    "tableName": "sales",
+    "columns": [
+      {
+        "name": "order_id",
+        "type": "text"
+      },
+      {
+        "name": "order_date",
+        "type": "text"
+      },
+      {
+        "name": "category",
+        "type": "text"
+      },
+      {
+        "name": "sub_category",
+        "type": "text"
+      },
+      {
+        "name": "product_name",
+        "type": "text"
+      },
+      {
+        "name": "region",
+        "type": "text"
+      },
+      {
+        "name": "segment",
+        "type": "text"
+      },
+      {
+        "name": "sales",
+        "type": "number"
+      },
+      {
+        "name": "quantity",
+        "type": "integer"
+      },
+      {
+        "name": "discount",
+        "type": "number"
+      },
+      {
+        "name": "profit",
+        "type": "number"
+      }
+    ]
+  },
+  "basic": {
+    "totalRows": 300,
+    "totalSales": 532367.26,
+    "totalProfit": 65389.91,
+    "totalQuantity": 1717,
+    "avgSales": 1774.56,
+    "avgDiscount": 0.08,
+    "uniqueProducts": 10,
+    "dateRange": {
+      "min": "2023-01-06",
+      "max": "2024-12-31"
+    }
+  },
+  "byCategory": {
+    "Office Supplies": {
+      "count": 92,
+      "totalSales": 5264.65,
+      "totalProfit": 608.31
+    },
+    "Furniture": {
+      "count": 101,
+      "totalSales": 152586.14,
+      "totalProfit": 17903.16
+    },
+    "Electronics": {
+      "count": 107,
+      "totalSales": 374516.47,
+      "totalProfit": 46878.44
+    }
+  },
+  "topCategoryBySales": {
+    "category": "Electronics",
+    "count": 107,
+    "totalSales": 374516.47,
+    "totalProfit": 46878.44
+  },
+  "topCategoryByCount": {
+    "category": "Electronics",
+    "count": 107,
+    "totalSales": 374516.47,
+    "totalProfit": 46878.44
+  },
+  "byRegion": {
+    "South": {
+      "count": 65,
+      "totalSales": 153060.24
+    },
+    "West": {
+      "count": 81,
+      "totalSales": 165777.58
+    },
+    "East": {
+      "count": 75,
+      "totalSales": 108072.93
+    },
+    "North": {
+      "count": 79,
+      "totalSales": 105456.51
+    }
+  },
+  "topRegionBySales": {
+    "region": "West",
+    "count": 81,
+    "totalSales": 165777.58
+  },
+  "bySegment": {
+    "Corporate": {
+      "count": 99,
+      "totalSales": 121369.87
+    },
+    "Home Office": {
+      "count": 101,
+      "totalSales": 207332.7
+    },
+    "Consumer": {
+      "count": 100,
+      "totalSales": 203664.69
+    }
+  },
+  "top5SubCategoriesBySales": [
+    {
+      "sub_category": "Laptops",
+      "sales": 281080.22
+    },
+    {
+      "sub_category": "Tables",
+      "sales": 86912.33
+    },
+    {
+      "sub_category": "Phones",
+      "sales": 81744.68
+    },
+    {
+      "sub_category": "Chairs",
+      "sales": 37168.04
+    },
+    {
+      "sub_category": "Bookcases",
+      "sales": 28505.77
+    }
+  ],
+  "top5ProductsBySales": [
+    {
+      "product_name": "Laptop Air",
+      "sales": 281080.22
+    },
+    {
+      "product_name": "Standing Desk",
+      "sales": 86912.33
+    },
+    {
+      "product_name": "Smartphone Pro",
+      "sales": 81744.68
+    },
+    {
+      "product_name": "Office Chair",
+      "sales": 37168.04
+    },
+    {
+      "product_name": "Wooden Bookshelf",
+      "sales": 28505.77
+    }
+  ],
+  "monthlySales": [
+    {
+      "month": "2023-01",
+      "totalSales": 3284.5,
+      "orderCount": 10
+    },
+    {
+      "month": "2023-02",
+      "totalSales": 26088.02,
+      "orderCount": 10
+    },
+    {
+      "month": "2023-03",
+      "totalSales": 14575.51,
+      "orderCount": 9
+    },
+    {
+      "month": "2023-04",
+      "totalSales": 18421.25,
+      "orderCount": 12
+    },
+    {
+      "month": "2023-05",
+      "totalSales": 29027.49,
+      "orderCount": 21
+    },
+    {
+      "month": "2023-06",
+      "totalSales": 10316.25,
+      "orderCount": 8
+    },
+    {
+      "month": "2023-07",
+      "totalSales": 21431.24,
+      "orderCount": 11
+    },
+    {
+      "month": "2023-08",
+      "totalSales": 27600.66,
+      "orderCount": 15
+    },
+    {
+      "month": "2023-09",
+      "totalSales": 15564.64,
+      "orderCount": 11
+    },
+    {
+      "month": "2023-10",
+      "totalSales": 20699.77,
+      "orderCount": 8
+    },
+    {
+      "month": "2023-11",
+      "totalSales": 17445.74,
+      "orderCount": 11
+    },
+    {
+      "month": "2023-12",
+      "totalSales": 9294.47,
+      "orderCount": 4
+    },
+    {
+      "month": "2024-01",
+      "totalSales": 42942.88,
+      "orderCount": 20
+    },
+    {
+      "month": "2024-02",
+      "totalSales": 34662.61,
+      "orderCount": 16
+    },
+    {
+      "month": "2024-03",
+      "totalSales": 19619.12,
+      "orderCount": 13
+    },
+    {
+      "month": "2024-04",
+      "totalSales": 1200.5,
+      "orderCount": 3
+    },
+    {
+      "month": "2024-05",
+      "totalSales": 35043.22,
+      "orderCount": 20
+    },
+    {
+      "month": "2024-06",
+      "totalSales": 13755.61,
+      "orderCount": 18
+    },
+    {
+      "month": "2024-07",
+      "totalSales": 38630.64,
+      "orderCount": 17
+    },
+    {
+      "month": "2024-08",
+      "totalSales": 22281.02,
+      "orderCount": 10
+    },
+    {
+      "month": "2024-09",
+      "totalSales": 32197.45,
+      "orderCount": 16
+    },
+    {
+      "month": "2024-10",
+      "totalSales": 25273.58,
+      "orderCount": 9
+    },
+    {
+      "month": "2024-11",
+      "totalSales": 30650.4,
+      "orderCount": 11
+    },
+    {
+      "month": "2024-12",
+      "totalSales": 22360.69,
+      "orderCount": 17
+    }
+  ],
+  "profitByRegion": {
+    "South": 20521.06,
+    "West": 18798.45,
+    "East": 14516.88,
+    "North": 11553.52
+  },
+  "discountDistribution": {
+    "0": 156,
+    "0.05": 24,
+    "0.1": 35,
+    "0.15": 31,
+    "0.2": 28,
+    "0.3": 26
+  },
+  "lossOrders": {
+    "count": 21,
+    "totalLoss": -895.21
+  }
+}
