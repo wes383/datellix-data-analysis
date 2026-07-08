@@ -244,7 +244,8 @@ export function Sidebar({ sessions }: SidebarProps) {
         )}
       </nav>
 
-      {/* Footer — Settings link (Sign out + Language switcher have moved to the Settings page) */}
+      {/* Footer — Settings link (Sign out + Language switcher + Theme toggle
+          have moved to the Settings page) */}
       <div className="border-t border-border px-2 py-2">
         <Link
           href="/settings"

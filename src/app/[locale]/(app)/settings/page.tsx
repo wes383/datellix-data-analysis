@@ -8,6 +8,7 @@ import { decryptConfig } from "@/lib/db/crypto";
 import { SettingsForm } from "@/components/settings/settings-form";
 import { DeleteAccountButton } from "@/components/settings/delete-account-button";
 import { LanguageSwitcher } from "@/components/sidebar/language-switcher";
+import { ThemeSelector } from "@/components/theme/theme-selector";
 import { normalizeLlmConfig, type LlmConfig, type StorageConfig } from "@/lib/db/schema";
 import { signOut } from "@/app/actions/sessions";
 import { LogOut } from "lucide-react";
@@ -81,6 +82,20 @@ export default async function SettingsPage({ params }: PageProps) {
           initialLlmConfig={llmConfig}
           initialStorageConfig={storageConfig}
         />
+
+        {/* Appearance — choose light/dark/system theme. Persisted via
+            localStorage and applied before first paint (no flash). */}
+        <div className="mt-6 rounded-lg border border-border p-4">
+          <h2 className="font-display text-sm font-medium tracking-tight">
+            {t("themeTitle")}
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("themeDescription")}
+          </p>
+          <div className="mt-3">
+            <ThemeSelector />
+          </div>
+        </div>
 
         {/* Language — choose the UI language. Persisted via NEXT_LOCALE cookie. */}
         <div className="mt-6 rounded-lg border border-border p-4">

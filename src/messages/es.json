@@ -99,9 +99,19 @@
     "label": "Idioma",
     "changeLanguage": "Cambiar idioma"
   },
+  "Theme": {
+    "label": "Tema",
+    "light": "Claro",
+    "dark": "Oscuro",
+    "system": "Sistema",
+    "switchToLight": "Cambiar a modo claro",
+    "switchToDark": "Cambiar a modo oscuro"
+  },
   "Settings": {
     "languageTitle": "Idioma",
     "languageDescription": "Elige el idioma de la interfaz. Se aplica inmediatamente y se recuerda para futuras visitas.",
+    "themeTitle": "Apariencia",
+    "themeDescription": "Elige entre tema claro, oscuro o del sistema. Se aplica inmediatamente y se recuerda para futuras visitas.",
     "pageTitle": "Configuración",
     "pageDescription": "Configura tu proveedor LLM, almacenamiento de archivos y preferencias de cuenta. Los cambios aplican a todas tus sesiones de chat.",
     "pageDisclaimer": "Las configuraciones predeterminadas del proyecto pueden quedarse sin cuota y no se garantiza su disponibilidad.",

@@ -3,7 +3,8 @@ import type { Metadata } from "next";
 import { NextIntlClientProvider, hasLocale } from "next-intl";
 import { notFound } from "next/navigation";
 import { setRequestLocale, getTranslations, getMessages } from "next-intl/server";
-import { Toaster } from "sonner";
+import { ThemeProvider } from "@/components/theme/theme-provider";
+import { ThemeToaster } from "@/components/theme/theme-toaster";
 import { LOCALES, type Locale, isLocale } from "@/i18n/routing";
 
 interface Props {
@@ -49,18 +50,10 @@ export default async function LocaleLayout({ children, params }: Props) {
 
   return (
     <NextIntlClientProvider locale={locale} messages={messages}>
-      {children}
-      <Toaster
-        position="top-right"
-        theme="light"
-        toastOptions={{
-          style: {
-            background: "hsl(0 0% 100%)",
-            border: "1px solid hsl(0 0% 89.8%)",
-            color: "hsl(0 0% 3.9%)",
-          },
-        }}
-      />
+      <ThemeProvider>
+        {children}
+        <ThemeToaster />
+      </ThemeProvider>
     </NextIntlClientProvider>
   );
 }

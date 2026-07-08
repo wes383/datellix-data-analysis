@@ -87,11 +87,13 @@ function formatTooltipValue(value: unknown): string {
   return compact;
 }
 
-/** Shared YAxis props so every chart type formats ticks identically. */
+/** Shared YAxis props so every chart type formats ticks identically.
+ *  Colours use the theme CSS variables so axes stay readable in both the
+ *  light and dark palettes. */
 const YAXIS_PROPS = {
-  tick: { fontSize: 11, fill: "hsl(0 0% 45%)" },
+  tick: { fontSize: 11, fill: "hsl(var(--muted-foreground))" },
   tickLine: false as const,
-  axisLine: { stroke: "hsl(0 0% 89.8%)" },
+  axisLine: { stroke: "hsl(var(--border))" },
   tickFormatter: (v: number) => formatCompact(v),
   // Default Recharts YAxis width is 60px; bump to 56px is enough for "9.0T"
   // but we keep 60 to be safe with negative values like "-1.2M".
@@ -102,12 +104,20 @@ const YAXIS_PROPS = {
 const TOOLTIP_FORMATTER = (value: unknown) =>
   typeof value === "number" ? formatTooltipValue(value) : String(value);
 
-/** Shared Tooltip style. */
+/** Shared Tooltip style — uses theme variables so the tooltip matches the
+ *  active palette instead of always rendering on a white card. */
 const TOOLTIP_STYLE = {
   borderRadius: "8px",
-  border: "1px solid hsl(0 0% 89.8%)",
+  border: "1px solid hsl(var(--border))",
+  background: "hsl(var(--popover))",
+  color: "hsl(var(--popover-foreground))",
   fontSize: "12px",
 };
+
+/** Shared Tooltip label/item style — keeps the label and value text readable
+ *  against the themed tooltip background. */
+const TOOLTIP_LABEL_STYLE = { color: "hsl(var(--popover-foreground))" };
+const TOOLTIP_ITEM_STYLE = { color: "hsl(var(--popover-foreground))" };
 
 /**
  * Render a Recharts chart from a ChartPayload spec.
@@ -173,24 +183,26 @@ function renderChart(
       const yAxisProps = { ...YAXIS_PROPS, width: uiConfig?.yAxisLabel ? 72 : 56 };
       return (
         <BarChart data={data} margin={chartMargin}>
-          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />}
+          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />}
           <XAxis
             dataKey={xKey}
-            tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }}
+            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
             tickLine={false}
-            axisLine={{ stroke: "hsl(0 0% 89.8%)" }}
+            axisLine={{ stroke: "hsl(var(--border))" }}
           >
             {uiConfig?.xAxisLabel && (
-              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
             )}
           </XAxis>
           <YAxis {...yAxisProps}>
             {uiConfig?.yAxisLabel && (
-              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
             )}
           </YAxis>
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
             formatter={TOOLTIP_FORMATTER}
           />
           {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
@@ -219,24 +231,26 @@ function renderChart(
       const yAxisProps = { ...YAXIS_PROPS, width: uiConfig?.yAxisLabel ? 72 : 56 };
       return (
         <LineChart data={data} margin={chartMargin}>
-          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />}
+          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />}
           <XAxis
             dataKey={xKey}
-            tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }}
+            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
             tickLine={false}
-            axisLine={{ stroke: "hsl(0 0% 89.8%)" }}
+            axisLine={{ stroke: "hsl(var(--border))" }}
           >
             {uiConfig?.xAxisLabel && (
-              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
             )}
           </XAxis>
           <YAxis {...yAxisProps}>
             {uiConfig?.yAxisLabel && (
-              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
             )}
           </YAxis>
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
             formatter={TOOLTIP_FORMATTER}
           />
           {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
@@ -289,24 +303,26 @@ function renderChart(
               </linearGradient>
             ))}
           </defs>
-          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />}
+          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />}
           <XAxis
             dataKey={xKey}
-            tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }}
+            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
             tickLine={false}
-            axisLine={{ stroke: "hsl(0 0% 89.8%)" }}
+            axisLine={{ stroke: "hsl(var(--border))" }}
           >
             {uiConfig?.xAxisLabel && (
-              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
             )}
           </XAxis>
           <YAxis {...yAxisProps}>
             {uiConfig?.yAxisLabel && (
-              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
             )}
           </YAxis>
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
             formatter={TOOLTIP_FORMATTER}
           />
           {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
@@ -333,11 +349,9 @@ function renderChart(
       return (
         <PieChart>
           <Tooltip
-            contentStyle={{
-              borderRadius: "8px",
-              border: "1px solid hsl(0 0% 89.8%)",
-              fontSize: "12px",
-            }}
+            contentStyle={TOOLTIP_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
           />
           {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
           <Pie
@@ -398,17 +412,17 @@ function renderChart(
         const displayLegend = uiConfig?.showLegend !== undefined ? uiConfig.showLegend : true;
         return (
           <ScatterChart margin={chartMargin}>
-            {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />}
+            {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />}
             <XAxis
               dataKey={xKey}
               type="number"
-              tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }}
+              tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
               tickLine={false}
-              axisLine={{ stroke: "hsl(0 0% 89.8%)" }}
+              axisLine={{ stroke: "hsl(var(--border))" }}
               tickFormatter={(v: number) => formatCompact(v)}
             >
               {uiConfig?.xAxisLabel && (
-                <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+                <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
               )}
             </XAxis>
             <YAxis
@@ -417,11 +431,13 @@ function renderChart(
               {...yAxisProps}
             >
               {uiConfig?.yAxisLabel && (
-                <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+                <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
               )}
             </YAxis>
             <Tooltip
               contentStyle={TOOLTIP_STYLE}
+              labelStyle={TOOLTIP_LABEL_STYLE}
+              itemStyle={TOOLTIP_ITEM_STYLE}
               formatter={TOOLTIP_FORMATTER}
             />
             {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
@@ -445,17 +461,17 @@ function renderChart(
       const displayLegend = uiConfig?.showLegend !== undefined ? uiConfig.showLegend : false;
       return (
         <ScatterChart margin={chartMargin}>
-          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />}
+          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />}
           <XAxis
             dataKey={xKey}
             type="number"
-            tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }}
+            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
             tickLine={false}
-            axisLine={{ stroke: "hsl(0 0% 89.8%)" }}
+            axisLine={{ stroke: "hsl(var(--border))" }}
             tickFormatter={(v: number) => formatCompact(v)}
           >
             {uiConfig?.xAxisLabel && (
-              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
             )}
           </XAxis>
           <YAxis
@@ -464,11 +480,13 @@ function renderChart(
             {...yAxisProps}
           >
             {uiConfig?.yAxisLabel && (
-              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
             )}
           </YAxis>
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
             formatter={TOOLTIP_FORMATTER}
           />
           {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
@@ -489,9 +507,14 @@ function renderChart(
       return (
         <RadarChart data={data} outerRadius="75%">
           <PolarGrid />
-          <PolarAngleAxis dataKey={xKey} tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} />
-          <PolarRadiusAxis tick={{ fontSize: 10, fill: "hsl(0 0% 45%)" }} tickFormatter={formatCompact} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={TOOLTIP_FORMATTER} />
+          <PolarAngleAxis dataKey={xKey} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+          <PolarRadiusAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} tickFormatter={formatCompact} />
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
+            formatter={TOOLTIP_FORMATTER}
+          />
           {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
           {yKeys.map((key, idx) => (
             <Radar
@@ -520,7 +543,12 @@ function renderChart(
           startAngle={90}
           endAngle={-270}
         >
-          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={TOOLTIP_FORMATTER} />
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
+            formatter={TOOLTIP_FORMATTER}
+          />
           {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
           <RadialBar
             background
@@ -553,7 +581,12 @@ function renderChart(
       }));
       return (
         <FunnelChart>
-          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={TOOLTIP_FORMATTER} />
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
+            formatter={TOOLTIP_FORMATTER}
+          />
           <Funnel
             data={funnelData}
             dataKey="value"
@@ -632,7 +665,12 @@ function renderChart(
             );
           }}
         >
-          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={TOOLTIP_FORMATTER} />
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
+            formatter={TOOLTIP_FORMATTER}
+          />
         </Treemap>
       );
     }
@@ -653,23 +691,28 @@ function renderChart(
       const [barKey, ...lineKeys] = yKeys;
       return (
         <ComposedChart data={data} margin={chartMargin}>
-          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 90%)" />}
+          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />}
           <XAxis
             dataKey={xKey}
-            tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }}
+            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
             tickLine={false}
-            axisLine={{ stroke: "hsl(0 0% 89.8%)" }}
+            axisLine={{ stroke: "hsl(var(--border))" }}
           >
             {uiConfig?.xAxisLabel && (
-              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+              <Label value={uiConfig.xAxisLabel} offset={-5} position="insideBottom" style={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
             )}
           </XAxis>
           <YAxis {...yAxisProps}>
             {uiConfig?.yAxisLabel && (
-              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(0 0% 45%)" }} />
+              <Label value={uiConfig.yAxisLabel} angle={-90} position="insideLeft" offset={10} style={{ textAnchor: 'middle', fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
             )}
           </YAxis>
-          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={TOOLTIP_FORMATTER} />
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
+            formatter={TOOLTIP_FORMATTER}
+          />
           {displayLegend && <Legend wrapperStyle={{ fontSize: "12px" }} />}
           {barKey && (
             <Bar

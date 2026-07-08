@@ -223,7 +223,7 @@ export function Select({
               ? { bottom: `calc(100% + ${POPOVER_GAP}px)` }
               : { top: `calc(100% + ${POPOVER_GAP}px)` }),
           }}
-          className="absolute left-0 z-50 w-full min-w-[200px] overflow-auto rounded-md border border-border bg-white p-1 shadow-lg"
+          className="absolute left-0 z-50 w-full min-w-[200px] overflow-auto rounded-md border border-border bg-popover p-1 shadow-lg"
         >
           {options.map((opt, idx) => {
             const isSelected = opt.value === value;

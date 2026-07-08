@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
 import { ChartViewer } from "@/components/library/chart-viewer";
+import { getThemeCardColor } from "@/lib/utils";
 import type { ChartPayload } from "@/lib/agent/state";
 
 export interface ChartDetailDataSource {
@@ -359,7 +360,7 @@ export function ChartDetailClient({ chart }: { chart: ChartDetailData }) {
         const filename =
           sanitizeFilename(chart.title || "chart") + ".png";
         const dataUrl = await toPng(chartContainerRef.current, {
-          backgroundColor: "#ffffff",
+          backgroundColor: getThemeCardColor(),
           pixelRatio: 2,
           cacheBust: true,
         });

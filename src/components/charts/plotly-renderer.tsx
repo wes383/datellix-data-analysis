@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslations } from "next-intl";
 import { Download, Maximize2, X } from "lucide-react";
+import { useTheme } from "@/components/theme/theme-provider";
+import { getThemeCardColor } from "@/lib/utils";
 
 /**
  * Plotly chart renderer (Phase 2 §2.3)
@@ -74,6 +76,7 @@ const TOP_MARGIN_NO_TITLE = 30;
 export function PlotlyRenderer({ figure, title, height, hideControls }: PlotlyRendererProps) {
   const t = useTranslations("Chat");
   const tc = useTranslations("Common");
+  const { resolvedTheme } = useTheme();
   const chartHeight = height ?? DEFAULT_CHART_HEIGHT;
   const [hasMounted, setHasMounted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -119,12 +122,25 @@ export function PlotlyRenderer({ figure, title, height, hideControls }: PlotlyRe
     const Plotly = (await import("plotly.js-dist-min")).default;
     const filename = (title ?? "chart").replace(/[^\w-]+/g, "_") || "chart";
     try {
+      // Temporarily set a solid background for the PNG export — transparent
+      // backgrounds make light-on-dark text invisible when the PNG is placed
+      // on a white surface (e.g. a document). Revert afterwards so the
+      // on-screen chart keeps its transparent background.
+      const bgColor = getThemeCardColor();
+      await Plotly.relayout(plotlyDivRef.current, {
+        paper_bgcolor: bgColor,
+        plot_bgcolor: bgColor,
+      });
       await Plotly.downloadImage(plotlyDivRef.current, {
         format: "png",
         filename,
         width: inlineGraphRef.current?.clientWidth ?? plotlyDivRef.current.clientWidth ?? 800,
         height: chartHeight,
         scale: 2,
+      });
+      await Plotly.relayout(plotlyDivRef.current, {
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
       });
     } catch (err) {
       console.error("[plotly] downloadImage failed:", err);
@@ -133,6 +149,16 @@ export function PlotlyRenderer({ figure, title, height, hideControls }: PlotlyRe
 
   const data = (figure.data ?? []) as unknown[];
   const layoutFromFigure = (figure.layout ?? {}) as Record<string, unknown>;
+
+  // Theme-aware colours — Plotly needs concrete colour strings (it can't
+  // read CSS variables). These mirror the light/dark palettes in globals.css
+  // so charts blend with the active UI theme. Backgrounds are set to
+  // transparent so the artifact card's bg-background shows through; font
+  // and axis colours are overridden so text stays legible on either palette.
+  const isDark = resolvedTheme === "dark";
+  const plotlyFontColor = isDark ? "hsl(0 0% 98%)" : "hsl(0 0% 3.9%)";
+  const plotlyAxisColor = isDark ? "hsl(0 0% 63.9%)" : "hsl(0 0% 45.1%)";
+  const plotlyGridColor = isDark ? "hsl(0 0% 17%)" : "hsl(0 0% 89.8%)";
 
   // Build the layout for the inline (card) view. We increase the top margin
   // when a title is present so the title and the legend don't overlap.
@@ -145,6 +171,9 @@ export function PlotlyRenderer({ figure, title, height, hideControls }: PlotlyRe
     const userMargin = (layoutFromFigure.margin as Record<string, number>) ?? {};
     return {
       ...layoutFromFigure,
+      // Transparent backgrounds so the card's theme-aware bg shows through.
+      paper_bgcolor: "rgba(0,0,0,0)",
+      plot_bgcolor: "rgba(0,0,0,0)",
       height: fullscreen ? undefined : height,
       autosize: true,
       margin: {
@@ -155,7 +184,30 @@ export function PlotlyRenderer({ figure, title, height, hideControls }: PlotlyRe
         // Apply our top margin last so it's not overridden by userMargin
         t: tMargin,
       },
-      font: { size: 11, ...((layoutFromFigure.font as Record<string, unknown>) ?? {}) },
+      // Global font — spread the figure's font settings first (size family,
+      // weight, etc.) then force the colour to match the active theme so
+      // labels stay readable on dark surfaces.
+      font: {
+        size: 11,
+        ...((layoutFromFigure.font as Record<string, unknown>) ?? {}),
+        color: plotlyFontColor,
+      },
+      // Axis tick labels + gridlines — override after the figure's axes so
+      // theme colours win. Only the primary x/y axes are overridden; if the
+      // figure uses secondary axes (xaxis2/yaxis2) those keep the figure's
+      // colours (rare in this project's chart types).
+      xaxis: {
+        ...((layoutFromFigure.xaxis as Record<string, unknown>) ?? {}),
+        color: plotlyAxisColor,
+        gridcolor: plotlyGridColor,
+        zerolinecolor: plotlyGridColor,
+      },
+      yaxis: {
+        ...((layoutFromFigure.yaxis as Record<string, unknown>) ?? {}),
+        color: plotlyAxisColor,
+        gridcolor: plotlyGridColor,
+        zerolinecolor: plotlyGridColor,
+      },
       // Move legend below the chart to avoid overlap with the title
       legend: fullscreen
         ? (layoutFromFigure.legend as Record<string, unknown>) ?? {

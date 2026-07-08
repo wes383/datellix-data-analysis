@@ -19,6 +19,7 @@ import { SaveChartDialog } from "@/components/library/save-chart-dialog";
 import { Markdown } from "@/components/chat/markdown";
 import { exportReportToPdf } from "@/lib/export/pdf";
 import { exportReportToMarkdownZip } from "@/lib/export/markdown-zip";
+import { getThemeCardColor } from "@/lib/utils";
 import type {
   Artifact,
   ChartPayload,
@@ -159,7 +160,7 @@ function DownloadMenu({
         )}
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 min-w-[140px] overflow-hidden rounded-md border border-border bg-white p-1 shadow-lg">
+        <div className="absolute right-0 top-full z-50 mt-1 min-w-[140px] overflow-hidden rounded-md border border-border bg-popover p-1 shadow-lg">
           {([
             { fmt: "xlsx" as const, label: t("downloadExcel") },
             { fmt: "csv" as const, label: t("downloadCsv") },
@@ -265,7 +266,7 @@ function ReportDownloadMenu({
         )}
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 min-w-[150px] overflow-hidden rounded-md border border-border bg-white p-1 shadow-lg">
+        <div className="absolute right-0 top-full z-50 mt-1 min-w-[150px] overflow-hidden rounded-md border border-border bg-popover p-1 shadow-lg">
           <button
             type="button"
             onClick={handlePdf}
@@ -460,7 +461,7 @@ export function ArtifactRenderer({
           (artifact.type === "forecast" ? "forecast" : "chart");
         const filename = sanitizeFilename(title) + ".png";
         const dataUrl = await toPng(chartContainerRef.current, {
-          backgroundColor: "#ffffff",
+          backgroundColor: getThemeCardColor(),
           pixelRatio: 2,
           cacheBust: true,
         });
@@ -820,7 +821,7 @@ function InlineArtifactView({
         return (
           <div
             {...dataProps}
-            className="rounded-lg border border-slate-200 p-3 bg-white"
+            className="rounded-lg border border-border bg-card p-3"
           >
             <PlotlyRenderer
               figure={payload.plotlyFigure}
@@ -833,7 +834,7 @@ function InlineArtifactView({
       return (
         <div
           {...dataProps}
-          className="rounded-lg border border-slate-200 p-3 bg-white"
+          className="rounded-lg border border-border bg-card p-3"
         >
           <RechartsRenderer spec={payload} />
         </div>
@@ -843,7 +844,7 @@ function InlineArtifactView({
       return (
         <div
           {...dataProps}
-          className="rounded-lg border border-slate-200 p-3 bg-white"
+          className="rounded-lg border border-border bg-card p-3"
         >
           <TableArtifactView payload={artifact.payload as TablePayload} />
         </div>
@@ -852,7 +853,7 @@ function InlineArtifactView({
       return (
         <div
           {...dataProps}
-          className="rounded-lg border border-slate-200 p-3 bg-white"
+          className="rounded-lg border border-border bg-card p-3"
         >
           <SummaryArtifactView payload={artifact.payload as SummaryPayload} />
         </div>
@@ -861,7 +862,7 @@ function InlineArtifactView({
       return (
         <div
           {...dataProps}
-          className="rounded-lg border border-slate-200 p-3 bg-white"
+          className="rounded-lg border border-border bg-card p-3"
         >
           <ForecastArtifactView payload={artifact.payload as ForecastPayload} />
         </div>
@@ -870,7 +871,7 @@ function InlineArtifactView({
       return (
         <div
           {...dataProps}
-          className="rounded-lg border border-slate-200 p-3 bg-white"
+          className="rounded-lg border border-border bg-card p-3"
         >
           <FileArtifactView payload={artifact.payload as FilePayload} />
         </div>
@@ -879,7 +880,7 @@ function InlineArtifactView({
       return (
         <div
           {...dataProps}
-          className="rounded-lg border border-slate-200 p-3 bg-white"
+          className="rounded-lg border border-border bg-card p-3"
         >
           <CodeArtifactView payload={artifact.payload as CodePayload} />
         </div>
@@ -959,7 +960,7 @@ const ReportArtifactView = forwardRef<
             // Marker found but artifact data missing — show a placeholder
             // so the user can see something went wrong (and where).
             return (
-              <p key={i} className="my-2 text-sm italic text-slate-400">
+              <p key={i} className="my-2 text-sm italic text-muted-foreground">
                 {t("artifactNotAvailable", { id })}
               </p>
             );
@@ -993,22 +994,23 @@ const ReportArtifactView = forwardRef<
   return (
     <div
       ref={ref}
-      // Plain white background + explicit colors so the browser's print
-      // engine produces a clean PDF (Tailwind oklch()/hsl() CSS variables
-      // can resolve oddly in the print iframe's fresh document context).
-      style={{ backgroundColor: "#ffffff", color: "#0f172a" }}
-      className="rounded-md p-2"
+      // Theme-aware background via CSS variables. PDF export handles its
+      // own colors in the print iframe (explicit #ffffff / #0f172a), so
+      // CSS variables here are fine for on-screen display — in the print
+      // iframe they resolve to invalid hsl() and fall back to the print
+      // document's body styles.
+      className="rounded-md bg-card p-2 text-foreground"
     >
       {/* Report header */}
-      <div className="mb-4 border-b border-slate-200 pb-3">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+      <div className="mb-4 border-b border-border pb-3">
+        <h1 className="text-2xl font-bold tracking-tight text-foreground">
           {title}
         </h1>
         {metadata?.subtitle && (
-          <p className="mt-1 text-sm text-slate-600">{metadata.subtitle}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{metadata.subtitle}</p>
         )}
         {(generatedAtDisplay || (metadata?.dataSourceNames && metadata.dataSourceNames.length > 0)) && (
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             {generatedAtDisplay && (
               <span>{t("generatedLabel")} {generatedAtDisplay}</span>
             )}
@@ -1030,7 +1032,7 @@ const ReportArtifactView = forwardRef<
       {referencedArtifactIds && referencedArtifactIds.length > 0 && (
         <div
           data-pdf-exclude
-          className="mt-6 border-t border-slate-200 pt-3 text-xs text-slate-500"
+          className="mt-6 border-t border-border pt-3 text-xs text-muted-foreground"
         >
           <span className="font-mono uppercase tracking-wider">
             {t("referencesLabel")}

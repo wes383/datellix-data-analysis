@@ -14,6 +14,7 @@
 
 import JSZip from "jszip";
 import { toPng } from "html-to-image";
+import { getThemeCardColor } from "@/lib/utils";
 import type {
   Artifact,
   ChartPayload,
@@ -191,7 +192,7 @@ async function captureArtifactPng(
   if (!node || !(node instanceof HTMLElement)) return null;
   try {
     return await toPng(node, {
-      backgroundColor: "#ffffff",
+      backgroundColor: getThemeCardColor(),
       pixelRatio: 2,
       cacheBust: true,
     });

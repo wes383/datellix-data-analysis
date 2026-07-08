@@ -99,9 +99,19 @@
     "label": "Language",
     "changeLanguage": "Change language"
   },
+  "Theme": {
+    "label": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System",
+    "switchToLight": "Switch to light mode",
+    "switchToDark": "Switch to dark mode"
+  },
   "Settings": {
     "languageTitle": "Language",
     "languageDescription": "Choose the interface language. Applied immediately and remembered for future visits.",
+    "themeTitle": "Appearance",
+    "themeDescription": "Choose between light, dark, or system theme. Applied immediately and remembered for future visits.",
     "pageTitle": "Settings",
     "pageDescription": "Configure your LLM provider, file storage, and account preferences. Changes apply to all your chat sessions.",
     "pageDisclaimer": "Project defaults may run out of quota and are not guaranteed to be available.",

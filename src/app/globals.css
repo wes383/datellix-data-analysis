@@ -50,6 +50,53 @@
     --status-active: 142 60% 45%;
     --status-paused: 38 92% 50%;
     --status-archived: 0 0% 45%;
+
+    /* Scrollbar thumb uses these so it adapts to the active palette */
+    --scrollbar-thumb: 0 0% 85%;
+    --scrollbar-thumb-hover: 0 0% 70%;
+    --scrollbar-track: 0 0% 100%;
+  }
+
+  /* Dark palette — near-black canvas, soft white ink, subtle gray borders.
+     Mirrors the light palette's Vercel-style minimalism. */
+  .dark {
+    --background: 0 0% 3.9%;            /* near-black */
+    --foreground: 0 0% 98%;             /* near-white */
+
+    --card: 0 0% 6%;                    /* slightly lifted surface */
+    --card-foreground: 0 0% 98%;
+
+    --popover: 0 0% 6%;
+    --popover-foreground: 0 0% 98%;
+
+    /* Primary: near-white in dark mode (inverted) */
+    --primary: 0 0% 98%;
+    --primary-foreground: 0 0% 9%;
+
+    --secondary: 0 0% 14.9%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 0 0% 14.9%;
+    --muted-foreground: 0 0% 63.9%;
+
+    --accent: 0 0% 14.9%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 50.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 0 0% 17%;
+    --input: 0 0% 17%;
+    --ring: 0 0% 83.1%;
+
+    /* Status colors stay readable on dark surfaces */
+    --status-active: 142 60% 50%;
+    --status-paused: 38 92% 55%;
+    --status-archived: 0 0% 63.9%;
+
+    --scrollbar-thumb: 0 0% 22%;
+    --scrollbar-thumb-hover: 0 0% 32%;
+    --scrollbar-track: 0 0% 6%;
   }
 }
 
@@ -70,13 +117,13 @@
     font-feature-settings: "ss01", "cv11";
   }
 
-  /* Selection */
+  /* Selection — uses foreground so it reads well on either palette */
   ::selection {
-    background: hsl(0 0% 9% / 0.15);
-    color: hsl(0 0% 3.9%);
+    background: hsl(var(--foreground) / 0.15);
+    color: hsl(var(--foreground));
   }
 
-  /* Scrollbar — slim and neutral */
+  /* Scrollbar — slim and neutral, adapts to active palette */
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -85,12 +132,12 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: hsl(0 0% 85%);
+    background: hsl(var(--scrollbar-thumb));
     border-radius: 5px;
-    border: 2px solid hsl(0 0% 100%);
+    border: 2px solid hsl(var(--scrollbar-track));
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: hsl(0 0% 70%);
+    background: hsl(var(--scrollbar-thumb-hover));
   }
 }
 
@@ -112,9 +159,9 @@
     color: hsl(var(--foreground));
   }
 
-  /* Subtle panel — opaque white with hairline border (kept for compatibility) */
+  /* Subtle panel — opaque card surface with hairline border (kept for compatibility) */
   .glass {
-    background: hsl(0 0% 100%);
+    background: hsl(var(--card));
     border: 1px solid hsl(var(--border));
   }
 

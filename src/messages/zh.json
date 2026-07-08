@@ -99,9 +99,19 @@
     "label": "语言",
     "changeLanguage": "切换语言"
   },
+  "Theme": {
+    "label": "主题",
+    "light": "浅色",
+    "dark": "深色",
+    "system": "跟随系统",
+    "switchToLight": "切换到浅色模式",
+    "switchToDark": "切换到深色模式"
+  },
   "Settings": {
     "languageTitle": "语言",
     "languageDescription": "选择界面语言。立即应用并记住以供下次访问。",
+    "themeTitle": "外观",
+    "themeDescription": "选择浅色、深色或跟随系统主题。立即应用并记住以供下次访问。",
     "pageTitle": "设置",
     "pageDescription": "配置 LLM 提供商、文件存储和账户偏好。更改适用于你的所有聊天会话。",
     "pageDisclaimer": "默认配置可能会耗尽额度，不保证始终可用。",

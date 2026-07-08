@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { TurnstileWidget } from "@/components/auth/turnstile-widget";
 import { LanguageSwitcher } from "@/components/sidebar/language-switcher";
+import { ThemeToggle } from "@/components/theme/theme-toggle";
 
 type Mode = "signin" | "signup";
 /** signup sub-steps */
@@ -174,7 +175,7 @@ export default function LoginPage() {
           Left panel — editorial brand showcase
           ============================================================ */}
       <aside className="relative hidden flex-col justify-between overflow-hidden border-r border-border bg-muted/40 p-12 lg:flex">
-        {/* Brand mark + language switcher */}
+        {/* Brand mark + language switcher + theme toggle */}
         <div className="relative z-10 flex items-center justify-between">
           <span
             style={{
@@ -185,8 +186,11 @@ export default function LoginPage() {
           >
             Datellix
           </span>
-          <div className="w-40">
-            <LanguageSwitcher variant="ghost" />
+          <div className="flex items-center gap-1">
+            <ThemeToggle />
+            <div className="w-40">
+              <LanguageSwitcher variant="ghost" />
+            </div>
           </div>
         </div>
 
@@ -219,9 +223,12 @@ export default function LoginPage() {
           Right panel — auth form
           ============================================================ */}
       <section className="relative flex items-center justify-center px-6 py-12 sm:px-12">
-        {/* Mobile language switcher (top-right) */}
-        <div className="absolute right-4 top-4 w-40 lg:hidden">
-          <LanguageSwitcher variant="ghost" />
+        {/* Mobile language switcher + theme toggle (top-right) */}
+        <div className="absolute right-4 top-4 flex items-center gap-1 lg:hidden">
+          <ThemeToggle />
+          <div className="w-40">
+            <LanguageSwitcher variant="ghost" />
+          </div>
         </div>
 
         <div className="w-full max-w-sm animate-fade-up">
